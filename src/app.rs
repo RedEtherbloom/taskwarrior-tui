@@ -2016,6 +2016,10 @@ impl TaskwarriorTui {
   }
 
   pub fn task_add(&mut self) -> Result<(), String> {
+    lazy_static! {
+      static ref RE: Regex = Regex::new(r"^Created task (?P<task_id>\d+).\n$").unwrap();
+    }
+
     let mut command = std::process::Command::new("task");
     command.arg("add");
 
@@ -2031,9 +2035,8 @@ impl TaskwarriorTui {
           Ok(output) => {
             if output.status.code() == Some(0) {
               let data = String::from_utf8_lossy(&output.stdout);
-              let re = Regex::new(r"^Created task (?P<task_id>\d+).\n$").unwrap();
               if self.config.uda_task_report_jump_to_task_on_add {
-                if let Some(caps) = re.captures(&data) {
+                if let Some(caps) = RE.captures(&data) {
                   self.current_selection_id = Some(caps["task_id"].parse::<u64>().unwrap_or_default());
                 }
               }
@@ -2233,13 +2236,16 @@ impl TaskwarriorTui {
   }
 
   pub fn task_undo(&mut self) -> Result<(), String> {
+    lazy_static! {
+      static ref RE: Regex = Regex::new(r"(?P<task_uuid>[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})").unwrap();
+    }
+
     let output = std::process::Command::new("task").arg("rc.confirmation=off").arg("undo").output();
 
     match output {
       Ok(output) => {
         let data = String::from_utf8_lossy(&output.stdout);
-        let re = Regex::new(r"(?P<task_uuid>[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})").unwrap();
-        if let Some(caps) = re.captures(&data) {
+        if let Some(caps) = RE.captures(&data) {
           if let Ok(uuid) = Uuid::parse_str(&caps["task_uuid"]) {
             self.current_selection_uuid = Some(uuid);
           }
