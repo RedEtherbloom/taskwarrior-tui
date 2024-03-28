@@ -3727,24 +3727,16 @@ impl TaskwarriorTui {
   }
 
   pub fn update_input_for_completion(&mut self) {
-    match self.mode {
-      Mode::Tasks(Action::Add | Action::Annotate | Action::Log) => {
-        let i = get_start_word_under_cursor(self.command.as_str(), self.command.pos());
-        let input = self.command.as_str()[i..self.command.pos()].to_string();
-        self.completion_list.input(input, "".to_string());
-      }
-      Mode::Tasks(Action::Modify) => {
-        let i = get_start_word_under_cursor(self.modify.as_str(), self.modify.pos());
-        let input = self.modify.as_str()[i..self.modify.pos()].to_string();
-        self.completion_list.input(input, "".to_string());
-      }
-      Mode::Tasks(Action::Filter) => {
-        let i = get_start_word_under_cursor(self.filter.as_str(), self.filter.pos());
-        let input = self.filter.as_str()[i..self.filter.pos()].to_string();
-        self.completion_list.input(input, "".to_string());
-      }
-      _ => {}
-    }
+    let line_buffer = match self.mode {
+      Mode::Tasks(Action::Add | Action::Annotate | Action::Log) => &self.command,
+      Mode::Tasks(Action::Modify) => &self.modify,
+      Mode::Tasks(Action::Filter) => &self.filter,
+      _ => return,
+    };
+
+    let i = get_start_word_under_cursor(line_buffer.as_str(), line_buffer.pos());
+    let input = line_buffer.as_str()[i..line_buffer.pos()].to_string();
+    self.completion_list.input(input, "".to_string());
   }
 }
 
