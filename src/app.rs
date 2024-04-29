@@ -1621,9 +1621,70 @@ impl TaskwarriorTui {
         let max_delta = Duration::from_secs(60);
         Ok(now.duration_since(prev)? > max_delta)
       }
-    } else {
-      Ok(true)
+
+  pub async fn tasks_changed_since(&self, since: &Date) -> Result<Vec<Uuid>> {
+    let mut command = tokio::process::Command::new("task");
+
+    // TODO: Read up more on Taskwarriors Timezones?
+    // This has no timezone, as it would otherwise differ from taskwarriors internal timezone free format
+    //Update:: The use a simple timestamp now internally. Neat!
+    // TODO: How did Timezone support change in TK3?
+    let last_modified_time = format!(
+      "'{:04}-{:02}-{:02}T{:02}:{:02}:{:02}'",
+      since.year(),
+      since.month(),
+      since.day(),
+      since.hour(),
+      since.minute(),
+      since.second(),
+    );
+
+    command
+      .arg("rc.color=off")
+      .arg("rc._forcecolor=off")
+      .arg("verbose=nothing")
+      // GCing contributes >40% of this commands runtime in many cases.
+      // New tasks would lead the export pipeline to rerun, also running GC, making this GC redundant.
+      .arg("rc.gc=off")
+      .arg(format!("modified.after:{}", last_modified_time))
+      .arg("_unique")
+      .arg("uuid");
+
+    info!("Running {:?}", command);
+
+    let output = command.output().await.context("Failed to fetch modified tasks uuids")?;
+    let data = String::from_utf8_lossy(&output.stdout);
+    let error = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+      return Err(anyhow!(
+        "Running the modified filter failed with Output: {:?}\n and Error: {:?}",
+        data,
+        error
+      ));
     }
+
+    // Splits the returned list of UUIDs, parses them and collects the uuids and failed attempts.
+    let (uuids, errs): (Vec<_>, Vec<_>) = data
+      .split_whitespace()
+      .map(|el| {
+        Uuid::parse_str(el).map_err(|e|
+          // Append additonal context of when it failed to the error and print it
+          {
+            let context = format!("Failed to parse UUID: {:?}", el);
+            let e_with_context = anyhow!(e).context(context);
+            error!("{:?}", e_with_context);
+
+            e_with_context
+        })
+      })
+      .partition_result();
+
+    if errs.len() > 0 {
+      error!("Got {} errors in total", errs.len());
+    }
+
+    Ok(uuids)
   }
 
   pub fn export_all_tasks(&mut self) -> Result<()> {
