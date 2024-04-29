@@ -2237,7 +2237,7 @@ impl TaskwarriorTui {
 
   pub fn task_undo(&mut self) -> Result<(), String> {
     lazy_static! {
-      static ref RE: Regex = Regex::new(r"(?P<task_uuid>[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})").unwrap();
+      static ref UUID_RE: Regex = Regex::new(r"(?P<task_uuid>[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12})").unwrap();
     }
 
     let output = std::process::Command::new("task").arg("rc.confirmation=off").arg("undo").output();
@@ -2245,7 +2245,7 @@ impl TaskwarriorTui {
     match output {
       Ok(output) => {
         let data = String::from_utf8_lossy(&output.stdout);
-        if let Some(caps) = RE.captures(&data) {
+        if let Some(caps) = UUID_RE.captures(&data) {
           if let Ok(uuid) = Uuid::parse_str(&caps["task_uuid"]) {
             self.current_selection_uuid = Some(uuid);
           }
