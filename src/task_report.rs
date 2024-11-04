@@ -25,6 +25,31 @@ pub fn format_date(dt: NaiveDateTime) -> String {
   dt.format("%Y-%m-%d").to_string()
 }
 
+/// Formats two given time values for use by `vague_format_date_time`
+///
+/// # Arguments
+///
+/// * `minus` - A minus sign to prefix the string with, if given
+/// * `major_time` - The bigger component of the two time components, e.g. in years.
+/// * `minor_time` - The smaller component of the two time components, e.g. in months.
+///                  The remainder that only gets printed when `with_remainder` is true.
+/// * `major_suffix` - The time suffix for the major component, e.g. y for years.
+/// * `minor_suffix` - The time suffix for the minor component, e.g. mo for months.
+/// * `with_remainder` - Determines if `minor_time` and `minor_suffix` get appended.
+fn format_time_pair(
+  minus: &str,
+  major_time: i64,
+  minor_time: i64,
+  major_suffix: &'static str,
+  minor_suffix: &'static str,
+  with_remainder: bool,
+) -> String {
+  match with_remainder {
+    true => format!("{minus}{major_time}{major_suffix}{minor_time}{minor_suffix}"),
+    false => format!("{minus}{major_time}{major_suffix}"),
+  }
+}
+
 pub fn vague_format_date_time(from_dt: NaiveDateTime, to_dt: NaiveDateTime, with_remainder: bool) -> String {
   let to_dt = Local.from_local_datetime(&to_dt).unwrap();
   let from_dt = Local.from_local_datetime(&from_dt).unwrap();
@@ -459,5 +484,19 @@ impl TaskReportTable {
         }
       }
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_format_time_pair() {  
+    assert_eq!(format_time_pair("-",3,1,"y","mo",true),"-3y1mo");
+    assert_eq!(format_time_pair("-",3,1,"y","mo",false),"-3y");
+
+    assert_eq!(format_time_pair("",11,7,"h","min",true),"11h7min");
+    assert_eq!(format_time_pair("",11,7,"h","min",false),"11h");
   }
 }
