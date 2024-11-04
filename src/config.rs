@@ -61,6 +61,8 @@ pub struct Config {
   pub uda_auto_insert_double_quotes_on_log: bool,
   pub uda_prefill_task_metadata: bool,
   pub uda_reset_filter_on_esc: bool,
+  // Maximum count of pretfetch task details to keep cached
+  pub uda_task_detail_cache_capacity: usize,
   pub uda_task_detail_prefetch: usize,
   pub uda_task_report_use_all_tasks_for_completion: bool,
   pub uda_task_report_show_info: bool,
@@ -129,6 +131,7 @@ impl Config {
     let uda_auto_insert_double_quotes_on_log = Self::get_uda_auto_insert_double_quotes_on_log(data);
     let uda_prefill_task_metadata = Self::get_uda_prefill_task_metadata(data);
     let uda_reset_filter_on_esc = Self::get_uda_reset_filter_on_esc(data);
+    let uda_task_detail_cache_capacity = Self::get_uda_task_detail_cache_capacity(data);
     let uda_task_detail_prefetch = Self::get_uda_task_detail_prefetch(data);
     let uda_task_report_use_all_tasks_for_completion = Self::get_uda_task_report_use_all_tasks_for_completion(data);
     let uda_task_report_show_info = Self::get_uda_task_report_show_info(data);
@@ -196,6 +199,7 @@ impl Config {
       uda_auto_insert_double_quotes_on_log,
       uda_prefill_task_metadata,
       uda_reset_filter_on_esc,
+      uda_task_detail_cache_capacity,
       uda_task_detail_prefetch,
       uda_task_report_use_all_tasks_for_completion,
       uda_task_report_show_info,
@@ -546,6 +550,13 @@ impl Config {
       .unwrap_or_default()
       .parse::<u64>()
       .unwrap_or(250)
+  }
+
+  fn get_uda_task_detail_cache_capacity(data: &str) -> usize {
+    Self::get_config("uda.taskwarrior-tui.task-report.task-detail-cache-capacity", data)
+      .unwrap_or_default()
+      .parse::<usize>()
+      .unwrap_or(1000)
   }
 
   fn get_uda_task_detail_prefetch(data: &str) -> usize {
