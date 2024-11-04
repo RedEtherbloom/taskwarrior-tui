@@ -57,6 +57,20 @@ debug = 1
 incremental = true
 lto = "off"
 
+# Mostly a derivation of release defaults(https://doc.rust-lang.org/beta/cargo/reference/profiles.html)
+[profile.speedI-release]
+inherits = "release"
+debug = 0
+incremental = false
+lto = "fat"
+
+[profile.speedII-release]
+inherits = "speedI-release"
+debug = 0
+incremental = false
+lto = "fat"
+codegen-units = 1
+
 [build-dependencies]
 clap = { version = "4.4.1", features = ["derive"] }
 clap_complete = "4.4.0"
