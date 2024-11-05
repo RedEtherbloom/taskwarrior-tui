@@ -1,8 +1,9 @@
 use std::{error::Error, process::Command};
 
 use anyhow::Result;
-use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime, TimeZone};
+use chrono::{DateTime, Datelike, Local, MappedLocalTime, NaiveDate, NaiveDateTime, TimeZone};
 use itertools::join;
+use log::trace;
 use task_hookrs::{task::Task, uda::UDAValue};
 use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
@@ -23,6 +24,25 @@ pub fn format_date(dt: NaiveDateTime) -> String {
   let offset = Local.offset_from_utc_datetime(&dt);
   let dt = DateTime::<Local>::from_naive_utc_and_offset(dt, offset);
   dt.format("%Y-%m-%d").to_string()
+}
+
+/// Converts NaiveDateTime to DateTime<Local>
+fn ndt_to_dtl(from: &NaiveDateTime) -> DateTime<Local> {
+  match Local.from_local_datetime(from) {
+    MappedLocalTime::Single(to) => to,
+    // This can happen if the `from` falls in e.g. Daylight Savings Timezone gap
+    MappedLocalTime::Ambiguous(earlier_to, later_to) => {
+      trace!(
+        "Got ambiguous Local times, earlier: {:?} and later: {:?}. Choosing earlier",
+        earlier_to,
+        later_to
+      );
+      earlier_to
+    }
+    MappedLocalTime::None => {
+      panic!("Got impossible time that fell in Local timezone gap from {:?}", from);
+    }
+  }
 }
 
 /// Formats two given time values for use by `vague_format_date_time`
@@ -51,8 +71,8 @@ fn format_time_pair(
 }
 
 pub fn vague_format_date_time(from_dt: NaiveDateTime, to_dt: NaiveDateTime, with_remainder: bool) -> String {
-  let to_dt = Local.from_local_datetime(&to_dt).unwrap();
-  let from_dt = Local.from_local_datetime(&from_dt).unwrap();
+  let to_dt = ndt_to_dtl(&to_dt);
+  let from_dt = ndt_to_dtl(&from_dt);
   let mut seconds = (to_dt - from_dt).num_seconds();
   let minus = if seconds < 0 {
     seconds *= -1;
