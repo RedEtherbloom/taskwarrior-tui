@@ -35,6 +35,8 @@ pub struct Uda {
   urgency: Option<f64>,
 }
 
+// TODO: Implement Default
+// TODO: Try to reimplement config parsing with Serde
 #[derive(Debug)]
 pub struct Config {
   pub enabled: bool,
