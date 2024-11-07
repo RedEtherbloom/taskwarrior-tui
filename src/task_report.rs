@@ -517,11 +517,35 @@ mod tests {
   use super::*;
 
   #[test]
-  fn test_format_time_pair() {  
-    assert_eq!(format_time_pair("-",3,1,"y","mo",true),"-3y1mo");
-    assert_eq!(format_time_pair("-",3,1,"y","mo",false),"-3y");
+  fn test_format_time_pair() {
+    assert_eq!(format_time_pair("-", 3, 1, "y", "mo", true), "-3y1mo");
+    assert_eq!(format_time_pair("-", 3, 1, "y", "mo", false), "-3y");
 
-    assert_eq!(format_time_pair("",11,7,"h","min",true),"11h7min");
-    assert_eq!(format_time_pair("",11,7,"h","min",false),"11h");
+    assert_eq!(format_time_pair("", 11, 7, "h", "min", true), "11h7min");
+    assert_eq!(format_time_pair("", 11, 7, "h", "min", false), "11h");
+  }
+
+  #[test]
+  fn test_format_vague_date_time() {
+    assert_eq!(vague_format_date_time(YEAR + 1, true), "1y0mo");
+    assert_eq!(vague_format_date_time(YEAR + 1, false), "1y");
+
+    assert_eq!(vague_format_date_time(3 * MONTH + WEEK, true), "3mo1w");
+    assert_eq!(vague_format_date_time(3 * MONTH + WEEK, false), "3mo");
+
+    assert_eq!(vague_format_date_time(2 * WEEK + DAY, true), "2w1d");
+    assert_eq!(vague_format_date_time(2 * WEEK + DAY, false), "2w");
+
+    assert_eq!(vague_format_date_time(DAY + HOUR, true), "1d1h");
+    assert_eq!(vague_format_date_time(DAY + HOUR, false), "1d");
+
+    assert_eq!(vague_format_date_time(HOUR + MINUTE, true), "1h1min");
+    assert_eq!(vague_format_date_time(HOUR + MINUTE, false), "1h");
+
+    assert_eq!(vague_format_date_time(MINUTE + 1, true), "1min1s");
+    assert_eq!(vague_format_date_time(MINUTE + 1, false), "1min");
+
+    assert_eq!(vague_format_date_time(1, true), "1s");
+    assert_eq!(vague_format_date_time(1, false), "1s");
   }
 }
