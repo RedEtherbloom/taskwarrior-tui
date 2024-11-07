@@ -22,7 +22,7 @@ impl TaskWarriorBool for &str {
 
 impl TaskWarriorBool for String {
   fn get_bool(&self) -> Option<bool> {
-      self.as_str().get_bool()
+    self.as_str().get_bool()
   }
 }
 
@@ -41,7 +41,9 @@ pub struct Config {
   pub color: HashMap<String, Style>,
   pub filter: String,
   pub data_location: String,
+  /// Not yet implemented
   pub obfuscate: bool,
+  /// Not yet implemented
   pub print_empty_columns: bool,
   pub due: usize,
   pub weekstart: bool,
@@ -94,11 +96,11 @@ pub struct Config {
 
 impl Config {
   pub fn new(data: &str, report: &str) -> Result<Self> {
-    let bool_collection = Self::get_bool_collection();
-
     let enabled = true;
-    let obfuscate = bool_collection.get("obfuscate").copied().unwrap_or(false);
-    let print_empty_columns = bool_collection.get("print_empty_columns").copied().unwrap_or(false);
+
+    // TODO: Properly implement these features
+    let obfuscate = false;
+    let print_empty_columns = false;
 
     let color = Self::get_color_collection(data);
     let filter = Self::get_filter(data, report)?;
@@ -221,10 +223,6 @@ impl Config {
       uda_context_menu_select_on_move,
       uda: vec![],
     })
-  }
-
-  fn get_bool_collection() -> HashMap<String, bool> {
-    HashMap::new()
   }
 
   fn get_uda_background_process(data: &str) -> String {
