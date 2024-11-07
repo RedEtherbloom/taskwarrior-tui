@@ -10,27 +10,19 @@ trait TaskWarriorBool {
   fn get_bool(&self) -> Option<bool>;
 }
 
-impl TaskWarriorBool for String {
+impl TaskWarriorBool for &str {
   fn get_bool(&self) -> Option<bool> {
-    if self == "true" || self == "1" || self == "y" || self == "yes" || self == "on" {
-      Some(true)
-    } else if self == "false" || self == "0" || self == "n" || self == "no" || self == "off" {
-      Some(false)
-    } else {
-      None
+    match *self {
+      "true" | "1" | "y" | "yes" | "on" => Some(true),
+      "false" | "0" | "n" | "no" | "off" => Some(false),
+      _ => None,
     }
   }
 }
 
-impl TaskWarriorBool for str {
+impl TaskWarriorBool for String {
   fn get_bool(&self) -> Option<bool> {
-    if self == "true" || self == "1" || self == "y" || self == "yes" || self == "on" {
-      Some(true)
-    } else if self == "false" || self == "0" || self == "n" || self == "no" || self == "off" {
-      Some(false)
-    } else {
-      None
-    }
+      self.as_str().get_bool()
   }
 }
 
