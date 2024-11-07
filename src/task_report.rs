@@ -70,11 +70,8 @@ fn format_time_pair(
   }
 }
 
-pub fn vague_format_date_time(from_dt: NaiveDateTime, to_dt: NaiveDateTime, with_remainder: bool) -> String {
-  let to_dt = ndt_to_dtl(&to_dt);
-  let from_dt = ndt_to_dtl(&from_dt);
-  let mut seconds = (to_dt - from_dt).num_seconds();
-  let minus = if seconds < 0 {
+pub fn vague_format_date_time(mut seconds: i64, with_remainder: bool) -> String {
+    let minus = if seconds < 0 {
     seconds *= -1;
     "-"
   } else {
@@ -124,6 +121,14 @@ pub fn vague_format_date_time(from_dt: NaiveDateTime, to_dt: NaiveDateTime, with
     };
   }
   format!("{}{}s", minus, seconds)
+}
+
+pub fn vague_format_date_time_local_tz(from_dt: NaiveDateTime, to_dt: NaiveDateTime, with_remainder: bool) -> String {
+  let to_dt = ndt_to_dtl(&to_dt);
+  let from_dt = ndt_to_dtl(&from_dt);
+  let seconds = (to_dt - from_dt).num_seconds();
+
+  vague_format_date_time(seconds, with_remainder)
 }
 
 pub struct TaskReportTable {
@@ -306,7 +311,7 @@ impl TaskReportTable {
     match attribute {
       "id" => task.id().unwrap_or_default().to_string(),
       "scheduled.relative" => match task.scheduled() {
-        Some(v) => vague_format_date_time(
+        Some(v) => vague_format_date_time_local_tz(
           Local::now().naive_utc(),
           NaiveDateTime::new(v.date(), v.time()),
           self.date_time_vague_precise,
@@ -314,7 +319,7 @@ impl TaskReportTable {
         None => "".to_string(),
       },
       "scheduled.countdown" => match task.scheduled() {
-        Some(v) => vague_format_date_time(
+        Some(v) => vague_format_date_time_local_tz(
           Local::now().naive_utc(),
           NaiveDateTime::new(v.date(), v.time()),
           self.date_time_vague_precise,
@@ -326,7 +331,7 @@ impl TaskReportTable {
         None => "".to_string(),
       },
       "due.relative" => match task.due() {
-        Some(v) => vague_format_date_time(
+        Some(v) => vague_format_date_time_local_tz(
           Local::now().naive_utc(),
           NaiveDateTime::new(v.date(), v.time()),
           self.date_time_vague_precise,
@@ -338,7 +343,7 @@ impl TaskReportTable {
         None => "".to_string(),
       },
       "until.remaining" => match task.until() {
-        Some(v) => vague_format_date_time(
+        Some(v) => vague_format_date_time_local_tz(
           Local::now().naive_utc(),
           NaiveDateTime::new(v.date(), v.time()),
           self.date_time_vague_precise,
@@ -349,14 +354,14 @@ impl TaskReportTable {
         Some(v) => format_date(NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
-      "entry.age" => vague_format_date_time(
+      "entry.age" => vague_format_date_time_local_tz(
         NaiveDateTime::new(task.entry().date(), task.entry().time()),
         Local::now().naive_utc(),
         self.date_time_vague_precise,
       ),
       "entry" => format_date(NaiveDateTime::new(task.entry().date(), task.entry().time())),
       "start.age" => match task.start() {
-        Some(v) => vague_format_date_time(
+        Some(v) => vague_format_date_time_local_tz(
           NaiveDateTime::new(v.date(), v.time()),
           Local::now().naive_utc(),
           self.date_time_vague_precise,
@@ -368,7 +373,7 @@ impl TaskReportTable {
         None => "".to_string(),
       },
       "end.age" => match task.end() {
-        Some(v) => vague_format_date_time(
+        Some(v) => vague_format_date_time_local_tz(
           NaiveDateTime::new(v.date(), v.time()),
           Local::now().naive_utc(),
           self.date_time_vague_precise,
@@ -435,7 +440,7 @@ impl TaskReportTable {
         None => "".to_string(),
       },
       "wait" => match task.wait() {
-        Some(v) => vague_format_date_time(
+        Some(v) => vague_format_date_time_local_tz(
           NaiveDateTime::new(v.date(), v.time()),
           Local::now().naive_utc(),
           self.date_time_vague_precise,
@@ -443,7 +448,7 @@ impl TaskReportTable {
         None => "".to_string(),
       },
       "wait.remaining" => match task.wait() {
-        Some(v) => vague_format_date_time(
+        Some(v) => vague_format_date_time_local_tz(
           Local::now().naive_utc(),
           NaiveDateTime::new(v.date(), v.time()),
           self.date_time_vague_precise,
