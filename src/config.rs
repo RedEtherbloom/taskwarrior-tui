@@ -43,6 +43,7 @@ pub struct Uda {
   urgency: Option<f64>,
 }
 
+// TODO: Implement Default
 #[derive(Debug)]
 pub struct Config {
   pub enabled: bool,
@@ -92,10 +93,13 @@ pub struct Config {
   pub uda_background_process: String,
   pub uda_background_process_period: usize,
   pub uda_quick_tag_name: String,
+  /// Include closest remainder when formatting time, e.g. 1y3mo for 15 months instead of 1y
+  pub uda_task_report_date_time_vague_more_precise: bool,
+  /// Omit remainder for date_time_vague_more_precise if it evaluates to 0
+  pub uda_task_report_date_time_vague_omit_0_remainder: bool,
   pub uda_task_report_prompt_on_undo: bool,
   pub uda_task_report_prompt_on_delete: bool,
   pub uda_task_report_prompt_on_done: bool,
-  pub uda_task_report_date_time_vague_more_precise: bool,
   pub uda_context_menu_select_on_move: bool,
   pub uda: Vec<Uda>,
 }
@@ -173,6 +177,7 @@ impl Config {
     let uda_task_report_prompt_on_done = Self::get_uda_task_report_prompt_on_done(data);
     let uda_context_menu_select_on_move = Self::get_uda_context_menu_select_on_move(data);
     let uda_task_report_date_time_vague_more_precise = Self::get_uda_task_report_date_time_vague_more_precise(data);
+    let uda_task_report_date_time_vague_omit_0_remainder = Self::get_uda_task_report_date_time_vague_omit_0_remainder(data);
 
     Ok(Self {
       enabled,
@@ -226,6 +231,7 @@ impl Config {
       uda_task_report_prompt_on_delete,
       uda_task_report_prompt_on_done,
       uda_task_report_date_time_vague_more_precise,
+      uda_task_report_date_time_vague_omit_0_remainder,
       uda_context_menu_select_on_move,
       uda: vec![],
     })
@@ -579,6 +585,13 @@ impl Config {
 
   fn get_uda_task_report_date_time_vague_more_precise(data: &str) -> bool {
     Self::get_config("uda.taskwarrior-tui.task-report.date-time-vague-more-precise", data)
+      .unwrap_or_default()
+      .get_bool()
+      .unwrap_or(false)
+  }
+
+  fn get_uda_task_report_date_time_vague_omit_0_remainder(data: &str) -> bool {
+    Self::get_config("uda.taskwarrior-tui.task-report.date-time-vague-omit-0-remainder", data)
       .unwrap_or_default()
       .get_bool()
       .unwrap_or(false)

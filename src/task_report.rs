@@ -16,102 +16,6 @@ const WEEK: i64 = 7 * DAY;
 const MONTH: i64 = 30 * DAY;
 const YEAR: i64 = 365 * DAY;
 
-pub fn format_date_time(dt: NaiveDateTime) -> String {
-  let dt = Local.from_local_datetime(&dt).unwrap();
-  dt.format("%Y-%m-%d %H:%M:%S").to_string()
-}
-
-pub fn format_date(dt: NaiveDateTime) -> String {
-  let offset = Local.offset_from_utc_datetime(&dt);
-  let dt = DateTime::<Local>::from_naive_utc_and_offset(dt, offset);
-  dt.format("%Y-%m-%d").to_string()
-}
-
-/// Converts NaiveDateTime to DateTime<Local>
-fn ndt_to_dtl(from: &NaiveDateTime) -> DateTime<Local> {
-  match Local.from_local_datetime(from) {
-    MappedLocalTime::Single(to) => to,
-    // This can happen if the `from` falls in e.g. Daylight Savings Timezone gap
-    MappedLocalTime::Ambiguous(earlier_to, later_to) => {
-      trace!(
-        "Got ambiguous Local times, earlier: {:?} and later: {:?}. Choosing earlier",
-        earlier_to,
-        later_to
-      );
-      earlier_to
-    }
-    MappedLocalTime::None => {
-      panic!("Got impossible time that fell in Local timezone gap from {:?}", from);
-    }
-  }
-}
-
-/// Formats two given time values for use by `vague_format_date_time`
-///
-/// # Arguments
-///
-/// * `negative` - Boolean denominating if a minus should be prefixed.
-/// * `major_time` - The bigger component of the two time components, e.g. in years.
-/// * `minor_time` - The smaller component of the two time components, e.g. in months.
-///                  The remainder that only gets printed when `with_remainder` is true.
-/// * `major_suffix` - The time suffix for the major component, e.g. y for years.
-/// * `minor_suffix` - The time suffix for the minor component, e.g. mo for months.
-/// * `with_remainder` - Determines if `minor_time` and `minor_suffix` get appended.
-fn format_time_pair(
-  negative: bool,
-  major_time: i64,
-  minor_time: i64,
-  major_suffix: &'static str,
-  minor_suffix: &'static str,
-  with_remainder: bool,
-) -> String 
-{
-  let minus = match negative {
-    true => "-",
-    false => ""
-  };
-
-  match with_remainder {
-    true => format!("{minus}{major_time}{major_suffix}{minor_time}{minor_suffix}"),
-    false => format!("{minus}{major_time}{major_suffix}"),
-  }
-}
-
-pub fn vague_format_date_time(mut seconds: i64, with_remainder: bool) -> String {
-  let negative = if seconds < 0 {
-    seconds *= -1;
-    true
-  } else {
-    false
-  };
-  let remainder = |major_time: i64, minor_time: i64| -> i64 { (seconds - major_time * (seconds / major_time)) / minor_time };
-
-  if seconds >= YEAR {
-    format_time_pair(negative, seconds / YEAR, remainder(YEAR, MONTH), "y", "mo", with_remainder)
-  } else if seconds >= 3 * MONTH {
-    format_time_pair(negative, seconds / MONTH, remainder(MONTH, WEEK), "mo", "w", with_remainder)
-  } else if seconds >= 2 * WEEK {
-    format_time_pair(negative, seconds / WEEK, remainder(WEEK, DAY), "w", "d", with_remainder)
-  } else if seconds >= DAY {
-    format_time_pair(negative, seconds / DAY, remainder(DAY, HOUR), "d", "h", with_remainder)
-  } else if seconds >= HOUR {
-    format_time_pair(negative, seconds / HOUR, remainder(HOUR, MINUTE), "h", "min", with_remainder)
-  } else if seconds >= MINUTE {
-    format_time_pair(negative, seconds / MINUTE, remainder(MINUTE, SECOND), "min", "s", with_remainder)
-  } else {
-    format_time_pair(negative, seconds, 0, "s", "", false)
-  }
-}
-
-/// Format vague date_time while taking e.g. leap seconcds or DST into account
-pub fn vague_format_date_time_local_tz(from_dt: NaiveDateTime, to_dt: NaiveDateTime, with_remainder: bool) -> String {
-  let to_dt = ndt_to_dtl(&to_dt);
-  let from_dt = ndt_to_dtl(&from_dt);
-  let seconds = (to_dt - from_dt).num_seconds();
-
-  vague_format_date_time(seconds, with_remainder)
-}
-
 pub struct TaskReportTable {
   pub labels: Vec<String>,
   pub columns: Vec<String>,
@@ -119,6 +23,7 @@ pub struct TaskReportTable {
   pub virtual_tags: Vec<String>,
   pub description_width: usize,
   pub date_time_vague_precise: bool,
+  pub date_time_vague_omit_0_remainder: bool,
 }
 
 impl TaskReportTable {
@@ -166,6 +71,7 @@ impl TaskReportTable {
       virtual_tags: virtual_tags.iter().map(ToString::to_string).collect::<Vec<_>>(),
       description_width: 100,
       date_time_vague_precise: false,
+      date_time_vague_omit_0_remainder: false,
     };
     task_report_table.export_headers(Some(data), report)?;
     Ok(task_report_table)
@@ -292,77 +198,49 @@ impl TaskReportTable {
     match attribute {
       "id" => task.id().unwrap_or_default().to_string(),
       "scheduled.relative" => match task.scheduled() {
-        Some(v) => vague_format_date_time_local_tz(
-          Local::now().naive_utc(),
-          NaiveDateTime::new(v.date(), v.time()),
-          self.date_time_vague_precise,
-        ),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "scheduled.countdown" => match task.scheduled() {
-        Some(v) => vague_format_date_time_local_tz(
-          Local::now().naive_utc(),
-          NaiveDateTime::new(v.date(), v.time()),
-          self.date_time_vague_precise,
-        ),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "scheduled" => match task.scheduled() {
-        Some(v) => format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "due.relative" => match task.due() {
-        Some(v) => vague_format_date_time_local_tz(
-          Local::now().naive_utc(),
-          NaiveDateTime::new(v.date(), v.time()),
-          self.date_time_vague_precise,
-        ),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "due" => match task.due() {
-        Some(v) => format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "until.remaining" => match task.until() {
-        Some(v) => vague_format_date_time_local_tz(
-          Local::now().naive_utc(),
-          NaiveDateTime::new(v.date(), v.time()),
-          self.date_time_vague_precise,
-        ),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "until" => match task.until() {
-        Some(v) => format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
-      "entry.age" => vague_format_date_time_local_tz(
-        NaiveDateTime::new(task.entry().date(), task.entry().time()),
-        Local::now().naive_utc(),
-        self.date_time_vague_precise,
-      ),
-      "entry" => format_date(NaiveDateTime::new(task.entry().date(), task.entry().time())),
+      "entry.age" => self.vague_format_date_time_local_tz(NaiveDateTime::new(task.entry().date(), task.entry().time()), Local::now().naive_utc()),
+      "entry" => Self::format_date(NaiveDateTime::new(task.entry().date(), task.entry().time())),
       "start.age" => match task.start() {
-        Some(v) => vague_format_date_time_local_tz(
-          NaiveDateTime::new(v.date(), v.time()),
-          Local::now().naive_utc(),
-          self.date_time_vague_precise,
-        ),
+        Some(v) => self.vague_format_date_time_local_tz(NaiveDateTime::new(v.date(), v.time()), Local::now().naive_utc()),
         None => "".to_string(),
       },
       "start" => match task.start() {
-        Some(v) => format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "end.age" => match task.end() {
-        Some(v) => vague_format_date_time_local_tz(
-          NaiveDateTime::new(v.date(), v.time()),
-          Local::now().naive_utc(),
-          self.date_time_vague_precise,
-        ),
+        Some(v) => self.vague_format_date_time_local_tz(NaiveDateTime::new(v.date(), v.time()), Local::now().naive_utc()),
         None => "".to_string(),
       },
       "end" => match task.end() {
-        Some(v) => format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "status.short" => task.status().to_string().chars().next().unwrap().to_string(),
@@ -421,19 +299,11 @@ impl TaskReportTable {
         None => "".to_string(),
       },
       "wait" => match task.wait() {
-        Some(v) => vague_format_date_time_local_tz(
-          NaiveDateTime::new(v.date(), v.time()),
-          Local::now().naive_utc(),
-          self.date_time_vague_precise,
-        ),
+        Some(v) => self.vague_format_date_time_local_tz(NaiveDateTime::new(v.date(), v.time()), Local::now().naive_utc()),
         None => "".to_string(),
       },
       "wait.remaining" => match task.wait() {
-        Some(v) => vague_format_date_time_local_tz(
-          Local::now().naive_utc(),
-          NaiveDateTime::new(v.date(), v.time()),
-          self.date_time_vague_precise,
-        ),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
         None => "".to_string(),
       },
       "description.count" => {
@@ -491,6 +361,107 @@ impl TaskReportTable {
       }
     }
   }
+
+  pub fn format_date_time(dt: NaiveDateTime) -> String {
+    let dt = Local.from_local_datetime(&dt).unwrap();
+    dt.format("%Y-%m-%d %H:%M:%S").to_string()
+  }
+
+  pub fn format_date(dt: NaiveDateTime) -> String {
+    let offset = Local.offset_from_utc_datetime(&dt);
+    let dt = DateTime::<Local>::from_naive_utc_and_offset(dt, offset);
+    dt.format("%Y-%m-%d").to_string()
+  }
+
+  /// Formats two given time values for use by `vague_format_date_time`
+  ///
+  /// # Arguments
+  ///
+  /// * `negative` - Boolean denominating if a minus should be prefixed.
+  /// * `major_time` - The bigger component of the two time components, e.g. in years.
+  /// * `minor_time` - The smaller component of the two time components, e.g. in months.
+  ///                  The remainder that only gets printed when `with_remainder` is true.
+  /// * `major_suffix` - The time suffix for the major component, e.g. y for years.
+  /// * `minor_suffix` - The time suffix for the minor component, e.g. mo for months.
+  /// * `with_remainder` - Determines if `minor_time` and `minor_suffix` get appended as the remainder.
+  /// * `omit_0_remainder` - Disables the remainder if it is 0, due to rounding.
+  fn format_time_pair(
+    negative: bool,
+    major_time: i64,
+    minor_time: i64,
+    major_suffix: &'static str,
+    minor_suffix: &'static str,
+    mut with_remainder: bool,
+    omit_0_remainder: bool
+  ) -> String {
+    let minus = match negative {
+      true => "-",
+      false => "",
+    };
+
+    if omit_0_remainder && minor_time == 0 {
+      with_remainder = false;
+    }
+
+    match with_remainder {
+      true => format!("{minus}{major_time}{major_suffix}{minor_time}{minor_suffix}"),
+      false => format!("{minus}{major_time}{major_suffix}"),
+    }
+  }
+
+  pub fn vague_format_date_time(mut seconds: i64, with_remainder: bool, omit_0_remainder: bool) -> String {
+    let negative = if seconds < 0 {
+      seconds *= -1;
+      true
+    } else {
+      false
+    };
+    let remainder = |major_time: i64, minor_time: i64| -> i64 { (seconds - major_time * (seconds / major_time)) / minor_time };
+
+    if seconds >= YEAR {
+      Self::format_time_pair(negative, seconds / YEAR, remainder(YEAR, MONTH), "y", "mo", with_remainder, omit_0_remainder)
+    } else if seconds >= 3 * MONTH {
+      Self::format_time_pair(negative, seconds / MONTH, remainder(MONTH, WEEK), "mo", "w", with_remainder, omit_0_remainder)
+    } else if seconds >= 2 * WEEK {
+      Self::format_time_pair(negative, seconds / WEEK, remainder(WEEK, DAY), "w", "d", with_remainder, omit_0_remainder)
+    } else if seconds >= DAY {
+      Self::format_time_pair(negative, seconds / DAY, remainder(DAY, HOUR), "d", "h", with_remainder, omit_0_remainder)
+    } else if seconds >= HOUR {
+      Self::format_time_pair(negative, seconds / HOUR, remainder(HOUR, MINUTE), "h", "min", with_remainder, omit_0_remainder)
+    } else if seconds >= MINUTE {
+      Self::format_time_pair(negative, seconds / MINUTE, remainder(MINUTE, SECOND), "min", "s", with_remainder, omit_0_remainder)
+    } else {
+      Self::format_time_pair(negative, seconds, 0, "s", "", false, false)
+    }
+  }
+
+  /// Converts NaiveDateTime to DateTime<Local>
+  fn ndt_to_dtl(from: &NaiveDateTime) -> DateTime<Local> {
+    match Local.from_local_datetime(from) {
+      MappedLocalTime::Single(to) => to,
+      // This can happen if the `from` falls in e.g. Daylight Savings Timezone gap
+      MappedLocalTime::Ambiguous(earlier_to, later_to) => {
+        trace!(
+          "Got ambiguous Local times, earlier: {:?} and later: {:?}. Choosing earlier",
+          earlier_to,
+          later_to
+        );
+        earlier_to
+      }
+      MappedLocalTime::None => {
+        panic!("Got impossible time that fell in Local timezone gap from {:?}", from);
+      }
+    }
+  }
+
+  /// Format vague date_time while taking e.g. leap seconds or DST into account
+  pub fn vague_format_date_time_local_tz(self: &Self, from_dt: NaiveDateTime, to_dt: NaiveDateTime) -> String {
+    let to_dt = Self::ndt_to_dtl(&to_dt);
+    let from_dt = Self::ndt_to_dtl(&from_dt);
+    let seconds = (to_dt - from_dt).num_seconds();
+
+    Self::vague_format_date_time(seconds, self.date_time_vague_precise, self.date_time_vague_omit_0_remainder)
+  }
 }
 
 #[cfg(test)]
@@ -499,34 +470,36 @@ mod tests {
 
   #[test]
   fn test_format_time_pair() {
-    assert_eq!(format_time_pair(true, 3, 1, "y", "mo", true), "-3y1mo");
-    assert_eq!(format_time_pair(true, 3, 1, "y", "mo", false), "-3y");
+    assert_eq!(TaskReportTable::format_time_pair(true, 3, 1, "y", "mo", false, false), "-3y");
+    assert_eq!(TaskReportTable::format_time_pair(true, 3, 1, "y", "mo", true, false), "-3y1mo");
 
-    assert_eq!(format_time_pair(false, 11, 7, "h", "min", true), "11h7min");
-    assert_eq!(format_time_pair(false, 11, 7, "h", "min", false), "11h");
+    assert_eq!(TaskReportTable::format_time_pair(false, 11, 7, "h", "min", true, false), "11h7min");
+    assert_eq!(TaskReportTable::format_time_pair(false, 11, 7, "h", "min", false, false), "11h");
   }
 
   #[test]
   fn test_format_vague_date_time() {
-    assert_eq!(vague_format_date_time(YEAR + DAY, true), "1y0mo");
-    assert_eq!(vague_format_date_time(YEAR + DAY, false), "1y");
+    assert_eq!(TaskReportTable::vague_format_date_time(YEAR + DAY, true, false), "1y0mo");
+    assert_eq!(TaskReportTable::vague_format_date_time(YEAR + DAY, true, true), "1y");
+    assert_eq!(TaskReportTable::vague_format_date_time(YEAR + MONTH, true, true), "1y1mo");
+    assert_eq!(TaskReportTable::vague_format_date_time(YEAR + DAY, false, false), "1y");
 
-    assert_eq!(vague_format_date_time(3 * MONTH + WEEK, true), "3mo1w");
-    assert_eq!(vague_format_date_time(3 * MONTH + WEEK, false), "3mo");
+    assert_eq!(TaskReportTable::vague_format_date_time(3 * MONTH + WEEK, true, false), "3mo1w");
+    assert_eq!(TaskReportTable::vague_format_date_time(3 * MONTH + WEEK, false, false), "3mo");
 
-    assert_eq!(vague_format_date_time(2 * WEEK + DAY, true), "2w1d");
-    assert_eq!(vague_format_date_time(2 * WEEK + DAY, false), "2w");
+    assert_eq!(TaskReportTable::vague_format_date_time(2 * WEEK + DAY, true, false), "2w1d");
+    assert_eq!(TaskReportTable::vague_format_date_time(2 * WEEK + DAY, false, false), "2w");
 
-    assert_eq!(vague_format_date_time(DAY + HOUR, true), "1d1h");
-    assert_eq!(vague_format_date_time(DAY + HOUR, false), "1d");
+    assert_eq!(TaskReportTable::vague_format_date_time(DAY + HOUR, true, false), "1d1h");
+    assert_eq!(TaskReportTable::vague_format_date_time(DAY + HOUR, false, false), "1d");
 
-    assert_eq!(vague_format_date_time(HOUR + MINUTE, true), "1h1min");
-    assert_eq!(vague_format_date_time(HOUR + MINUTE, false), "1h");
+    assert_eq!(TaskReportTable::vague_format_date_time(HOUR + MINUTE, true, false), "1h1min");
+    assert_eq!(TaskReportTable::vague_format_date_time(HOUR + MINUTE, false, false), "1h");
 
-    assert_eq!(vague_format_date_time(MINUTE + SECOND, true), "1min1s");
-    assert_eq!(vague_format_date_time(MINUTE + SECOND, false), "1min");
+    assert_eq!(TaskReportTable::vague_format_date_time(MINUTE + SECOND, true, false), "1min1s");
+    assert_eq!(TaskReportTable::vague_format_date_time(MINUTE + SECOND, false, false), "1min");
 
-    assert_eq!(vague_format_date_time(SECOND, true), "1s");
-    assert_eq!(vague_format_date_time(SECOND, false), "1s");
+    assert_eq!(TaskReportTable::vague_format_date_time(SECOND, true, false), "1s");
+    assert_eq!(TaskReportTable::vague_format_date_time(SECOND, false, false), "1s");
   }
 }

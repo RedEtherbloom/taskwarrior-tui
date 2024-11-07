@@ -8,8 +8,8 @@ required.
 
 Other `taskwarrior-tui` configuration options are possible using the user defined attribute feature
 of `taskwarrior`. All `taskwarrior-tui` specific configuration options will begin with
-`uda.taskwarrior-tui.`. The following is a full list of all the options available and their default
-values implemented by `taskwarrior-tui` if not defined in your `taskrc` file.
+`uda.taskwarrior-tui.`. The following is an almost complete list of all the options available and their default
+values implemented by `taskwarrior-tui`.
 
 ```plaintext
 uda.taskwarrior-tui.selection.indicator=•
@@ -40,6 +40,8 @@ uda.taskwarrior-tui.task-report.next.filter=$(task show report.next.filter)
 uda.taskwarrior-tui.task-report.auto-insert-double-quotes-on-add=true
 uda.taskwarrior-tui.task-report.auto-insert-double-quotes-on-annotate=true
 uda.taskwarrior-tui.task-report.auto-insert-double-quotes-on-log=true
+uda.taskwarrior-tui.task-report.date-time-vague-more-precise=false
+uda.taskwarrior-tui.task-report.date-time-vague-omit-0-remainder=false
 uda.taskwarrior-tui.task-report.reset-filter-on-esc=true
 uda.taskwarrior-tui.context-menu.select-on-move=false
 uda.taskwarrior-tui.tabs.change-focus-rotate=false
