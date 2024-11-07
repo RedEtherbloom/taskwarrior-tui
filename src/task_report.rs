@@ -8,12 +8,13 @@ use task_hookrs::{task::Task, uda::UDAValue};
 use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
 
-const YEAR: i64 = 60 * 60 * 24 * 365;
-const MONTH: i64 = 60 * 60 * 24 * 30;
-const MINUTE: i64 = 60;
-const WEEK: i64 = 60 * 60 * 24 * 7;
-const DAY: i64 = 60 * 60 * 24;
-const HOUR: i64 = 60 * 60;
+const SECOND: i64 = 1;
+const MINUTE: i64 = 60 * SECOND;
+const HOUR: i64 = 60 * MINUTE;
+const DAY: i64 = 24 * HOUR;
+const WEEK: i64 = 7 * DAY;
+const MONTH: i64 = 30 * DAY;
+const YEAR: i64 = 365 * DAY;
 
 pub fn format_date_time(dt: NaiveDateTime) -> String {
   let dt = Local.from_local_datetime(&dt).unwrap();
@@ -49,7 +50,7 @@ fn ndt_to_dtl(from: &NaiveDateTime) -> DateTime<Local> {
 ///
 /// # Arguments
 ///
-/// * `minus` - A minus sign to prefix the string with, if given
+/// * `negative` - Boolean denominating if a minus should be prefixed.
 /// * `major_time` - The bigger component of the two time components, e.g. in years.
 /// * `minor_time` - The smaller component of the two time components, e.g. in months.
 ///                  The remainder that only gets printed when `with_remainder` is true.
@@ -57,13 +58,19 @@ fn ndt_to_dtl(from: &NaiveDateTime) -> DateTime<Local> {
 /// * `minor_suffix` - The time suffix for the minor component, e.g. mo for months.
 /// * `with_remainder` - Determines if `minor_time` and `minor_suffix` get appended.
 fn format_time_pair(
-  minus: &str,
+  negative: bool,
   major_time: i64,
   minor_time: i64,
   major_suffix: &'static str,
   minor_suffix: &'static str,
   with_remainder: bool,
-) -> String {
+) -> String 
+{
+  let minus = match negative {
+    true => "-",
+    false => ""
+  };
+
   match with_remainder {
     true => format!("{minus}{major_time}{major_suffix}{minor_time}{minor_suffix}"),
     false => format!("{minus}{major_time}{major_suffix}"),
@@ -71,58 +78,32 @@ fn format_time_pair(
 }
 
 pub fn vague_format_date_time(mut seconds: i64, with_remainder: bool) -> String {
-    let minus = if seconds < 0 {
+  let negative = if seconds < 0 {
     seconds *= -1;
-    "-"
+    true
   } else {
-    ""
+    false
   };
+  let remainder = |major_time: i64, minor_time: i64| -> i64 { (seconds - major_time * (seconds / major_time)) / minor_time };
 
   if seconds >= YEAR {
-    return if with_remainder {
-      format!("{}{}y{}mo", minus, seconds / YEAR, (seconds - YEAR * (seconds / YEAR)) / MONTH)
-    } else {
-      format!("{}{}y", minus, seconds / YEAR)
-    };
+    format_time_pair(negative, seconds / YEAR, remainder(YEAR, MONTH), "y", "mo", with_remainder)
+  } else if seconds >= 3 * MONTH {
+    format_time_pair(negative, seconds / MONTH, remainder(MONTH, WEEK), "mo", "w", with_remainder)
+  } else if seconds >= 2 * WEEK {
+    format_time_pair(negative, seconds / WEEK, remainder(WEEK, DAY), "w", "d", with_remainder)
+  } else if seconds >= DAY {
+    format_time_pair(negative, seconds / DAY, remainder(DAY, HOUR), "d", "h", with_remainder)
+  } else if seconds >= HOUR {
+    format_time_pair(negative, seconds / HOUR, remainder(HOUR, MINUTE), "h", "min", with_remainder)
+  } else if seconds >= MINUTE {
+    format_time_pair(negative, seconds / MINUTE, remainder(MINUTE, SECOND), "min", "s", with_remainder)
+  } else {
+    format_time_pair(negative, seconds, 0, "s", "", false)
   }
-  if seconds >= 3 * MONTH {
-    return if with_remainder {
-      format!("{}{}mo{}w", minus, seconds / MONTH, (seconds - MONTH * (seconds / MONTH)) / WEEK)
-    } else {
-      format!("{}{}mo", minus, seconds / MONTH)
-    };
-  }
-  if seconds >= 2 * WEEK {
-    return if with_remainder {
-      format!("{}{}w{}d", minus, seconds / WEEK, (seconds - WEEK * (seconds / WEEK)) / DAY)
-    } else {
-      format!("{}{}w", minus, seconds / WEEK)
-    };
-  }
-  if seconds >= DAY {
-    return if with_remainder {
-      format!("{}{}d{}h", minus, seconds / DAY, (seconds - DAY * (seconds / DAY)) / HOUR)
-    } else {
-      format!("{}{}d", minus, seconds / DAY)
-    };
-  }
-  if seconds >= HOUR {
-    return if with_remainder {
-      format!("{}{}h{}min", minus, seconds / HOUR, (seconds - HOUR * (seconds / HOUR)) / MINUTE)
-    } else {
-      format!("{}{}h", minus, seconds / HOUR)
-    };
-  }
-  if seconds >= MINUTE {
-    return if with_remainder {
-      format!("{}{}min{}s", minus, seconds / MINUTE, (seconds - MINUTE * (seconds / MINUTE)))
-    } else {
-      format!("{}{}min", minus, seconds / MINUTE)
-    };
-  }
-  format!("{}{}s", minus, seconds)
 }
 
+/// Format vague date_time while taking e.g. leap seconcds or DST into account
 pub fn vague_format_date_time_local_tz(from_dt: NaiveDateTime, to_dt: NaiveDateTime, with_remainder: bool) -> String {
   let to_dt = ndt_to_dtl(&to_dt);
   let from_dt = ndt_to_dtl(&from_dt);
@@ -518,17 +499,17 @@ mod tests {
 
   #[test]
   fn test_format_time_pair() {
-    assert_eq!(format_time_pair("-", 3, 1, "y", "mo", true), "-3y1mo");
-    assert_eq!(format_time_pair("-", 3, 1, "y", "mo", false), "-3y");
+    assert_eq!(format_time_pair(true, 3, 1, "y", "mo", true), "-3y1mo");
+    assert_eq!(format_time_pair(true, 3, 1, "y", "mo", false), "-3y");
 
-    assert_eq!(format_time_pair("", 11, 7, "h", "min", true), "11h7min");
-    assert_eq!(format_time_pair("", 11, 7, "h", "min", false), "11h");
+    assert_eq!(format_time_pair(false, 11, 7, "h", "min", true), "11h7min");
+    assert_eq!(format_time_pair(false, 11, 7, "h", "min", false), "11h");
   }
 
   #[test]
   fn test_format_vague_date_time() {
-    assert_eq!(vague_format_date_time(YEAR + 1, true), "1y0mo");
-    assert_eq!(vague_format_date_time(YEAR + 1, false), "1y");
+    assert_eq!(vague_format_date_time(YEAR + DAY, true), "1y0mo");
+    assert_eq!(vague_format_date_time(YEAR + DAY, false), "1y");
 
     assert_eq!(vague_format_date_time(3 * MONTH + WEEK, true), "3mo1w");
     assert_eq!(vague_format_date_time(3 * MONTH + WEEK, false), "3mo");
@@ -542,10 +523,10 @@ mod tests {
     assert_eq!(vague_format_date_time(HOUR + MINUTE, true), "1h1min");
     assert_eq!(vague_format_date_time(HOUR + MINUTE, false), "1h");
 
-    assert_eq!(vague_format_date_time(MINUTE + 1, true), "1min1s");
-    assert_eq!(vague_format_date_time(MINUTE + 1, false), "1min");
+    assert_eq!(vague_format_date_time(MINUTE + SECOND, true), "1min1s");
+    assert_eq!(vague_format_date_time(MINUTE + SECOND, false), "1min");
 
-    assert_eq!(vague_format_date_time(1, true), "1s");
-    assert_eq!(vague_format_date_time(1, false), "1s");
+    assert_eq!(vague_format_date_time(SECOND, true), "1s");
+    assert_eq!(vague_format_date_time(SECOND, false), "1s");
   }
 }
