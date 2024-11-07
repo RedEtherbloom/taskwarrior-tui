@@ -227,33 +227,6 @@ impl Config {
     })
   }
 
-  fn get_uda_background_process(data: &str) -> String {
-    Self::get_config("uda.taskwarrior-tui.background_process", data).unwrap_or_default()
-  }
-
-  fn get_uda_background_process_period(data: &str) -> usize {
-    Self::get_config("uda.taskwarrior-tui.background_process_period", data)
-      .unwrap_or_default()
-      .parse::<usize>()
-      .unwrap_or(60)
-  }
-
-  fn get_uda_shortcuts(data: &str) -> Vec<String> {
-    let mut v = vec![];
-    for s in 0..=9 {
-      let c = format!("uda.taskwarrior-tui.shortcuts.{}", s);
-      let s = Self::get_config(&c, data).unwrap_or_default();
-      v.push(s);
-    }
-    v
-  }
-
-  fn get_uda_style(config: &str, data: &str) -> Option<Style> {
-    let c = format!("uda.taskwarrior-tui.style.{}", config);
-    let s = Self::get_config(&c, data)?;
-    Some(Self::get_tcolor(&s))
-  }
-
   fn get_color_collection(data: &str) -> HashMap<String, Style> {
     let mut color_collection = HashMap::new();
     for line in data.split('\n') {
@@ -506,6 +479,17 @@ impl Config {
       .unwrap_or(true)
   }
 
+  fn get_uda_background_process(data: &str) -> String {
+    Self::get_config("uda.taskwarrior-tui.background_process", data).unwrap_or_default()
+  }
+
+  fn get_uda_background_process_period(data: &str) -> usize {
+    Self::get_config("uda.taskwarrior-tui.background_process_period", data)
+      .unwrap_or_default()
+      .parse::<usize>()
+      .unwrap_or(60)
+  }
+
   fn get_uda_prefill_task_metadata(data: &str) -> bool {
     Self::get_config("uda.taskwarrior-tui.task-report.pre-fill-task-meta-data", data)
       .unwrap_or_default()
@@ -696,6 +680,22 @@ impl Config {
       .unwrap_or_default()
       .get_bool()
       .unwrap_or(false)
+  }
+
+  fn get_uda_shortcuts(data: &str) -> Vec<String> {
+    let mut v = vec![];
+    for s in 0..=9 {
+      let c = format!("uda.taskwarrior-tui.shortcuts.{}", s);
+      let s = Self::get_config(&c, data).unwrap_or_default();
+      v.push(s);
+    }
+    v
+  }
+
+  fn get_uda_style(config: &str, data: &str) -> Option<Style> {
+    let c = format!("uda.taskwarrior-tui.style.{}", config);
+    let s = Self::get_config(&c, data)?;
+    Some(Self::get_tcolor(&s))
   }
 
   fn get_uda_months_per_row(data: &str) -> usize {
