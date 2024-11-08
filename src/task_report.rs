@@ -202,7 +202,7 @@ impl TaskReportTable {
           // Why naive_utc?
           self.vague_format_date_time_local_tz(&Local::now().naive_utc(), date)
         }
-        None => "".to_owned(),
+        None => String::new(),
       }
     };
     // Format vague events that lie in the past, e.g. since
@@ -212,39 +212,30 @@ impl TaskReportTable {
           // Why naive_utc?
           self.vague_format_date_time_local_tz(date, &Local::now().naive_utc())
         }
-        None => "".to_owned(),
+        None => String::new(),
+      }
+    };
+    let format_option_date = |date: Option<&Date>| -> String {
+      match date {
+        Some(date) => Self::format_date(**date),
+        None => String::new(),
       }
     };
 
     match attribute {
       "id" => task.id().unwrap_or_default().to_string(),
       "scheduled.relative" | "scheduled.countdown" => format_vague_until(task.scheduled()),
-      "scheduled" => match task.scheduled() {
-        Some(v) => Self::format_date(**v),
-        None => "".to_string(),
-      },
+      "scheduled" => format_option_date(task.scheduled()),
       "due.relative" => format_vague_until(task.due()),
-      "due" => match task.due() {
-        Some(v) => Self::format_date(**v),
-        None => "".to_string(),
-      },
+      "due" => format_option_date(task.due()),
       "until.remaining" => format_vague_until(task.until()),
-      "until" => match task.until() {
-        Some(v) => Self::format_date(**v),
-        None => "".to_string(),
-      },
+      "until" => format_option_date(task.until()),
       "entry.age" => format_vague_since(Some(task.entry())),
       "entry" => Self::format_date(NaiveDateTime::new(task.entry().date(), task.entry().time())),
       "start.age" => format_vague_since(task.start()),
-      "start" => match task.start() {
-        Some(v) => Self::format_date(**v),
-        None => "".to_string(),
-      },
+      "start" => format_option_date(task.start()),
       "end.age" => format_vague_since(task.end()),
-      "end" => match task.end() {
-        Some(v) => Self::format_date(**v),
-        None => "".to_string(),
-      },
+      "end" => format_option_date(task.end()),
       "status.short" => task.status().to_string().chars().next().unwrap().to_string(),
       "status" => task.status().to_string(),
       "priority" => match task.priority() {
