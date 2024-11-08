@@ -47,11 +47,10 @@ pub struct Uda {
 }
 
 thread_local! {
-  static config_hash_map: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+  static CONFIG_HASH_MAP: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 
 }
-static mut use_new_config: bool = false;
-static mut nones: u64 = 0;
+static mut USE_NEW_CONFIG: bool = false;
 
 // TODO: Implement Default
 // TODO: Try to reimplement config parsing with Serde
@@ -431,39 +430,23 @@ impl Config {
     key.to_owned()
   }
 
-  fn parse_config(config: &str) -> Result<HashMap<String, String>> {
-    let mut config_values: HashMap<String, String> = config
+  fn parse_config(config: &str) -> HashMap<String, String> {
+    config
       // Split by platforms newline
       .lines()
-      // Pre-filter empty lines, as this is cheap
-      .filter(|line| !line.is_empty())
-      // Strip comments
-      .filter_map(|line| line.split('#').next())
-      // Trim spaces from start and end
-      .map(|line| line.trim())
       // Remove empty lines after filterchain
       .filter(|line| !line.is_empty())
       // Split into key and value(and filter out values like e.g. include that don't conform to this)
       .filter_map(|line| line.split_once('='))
       // Rename underscores to hyphens for consistency
       .map(|(key, value)| (Self::standardize_config_key(key), value.to_owned()))
-      .collect();
-
-    config_values.shrink_to_fit();
-    Ok(config_values)
+      .collect()
   }
 
   fn get_config(config: &str, data: &str) -> Option<String> {
     unsafe {
-      if (use_new_config) {
-        unsafe {
-          let value = config_hash_map.with_borrow(|x| x.get(config).map(|y| y.to_owned()));
-          if value.is_none() {
-            nones += 1;
-          }
-
-          return value;
-        }
+      if USE_NEW_CONFIG {
+        return CONFIG_HASH_MAP.with_borrow(|x| x.get(config).map(|y| y.to_owned()));
       }
     }
 
@@ -482,9 +465,7 @@ impl Config {
       } else {
         // ?
         if !line.starts_with("   ") {
-          let value = Some(config_lines.join(" "));
-
-          return value;
+          return Some(config_lines.join(" "));
         }
 
         config_lines.push(line.trim_start().trim_end().to_string());
@@ -492,13 +473,7 @@ impl Config {
     }
 
     if !config_lines.is_empty() {
-      let value = Some(config_lines.join(" "));
-
-      return value;
-    }
-
-    unsafe {
-      nones += 1;
+      return Some(config_lines.join(" "));
     }
     None
   }
@@ -973,53 +948,38 @@ mod tests {
 
     let iterations = 10000;
 
-    for i in { 0..iterations } {
-      let mut now = std::time::Instant::now();
+    for i in 0..iterations {
+      let now = std::time::Instant::now();
       let config = Config::new(&data, "next").unwrap();
-      let mut next = now.elapsed();
+      let next = now.elapsed();
       let elapsed = next.as_micros();
       duration += elapsed;
-      println!("Config loading. Elapsed: {}", elapsed);
-    }
-
-    let mut old_nones = 0;
-    unsafe {
-      old_nones = nones;
-
-      nones = 0;
+      println!("Config loaded. Elapsed: {}", elapsed);
     }
 
     let mut duration_new: u128 = 0;
-
-    let iterations = 10000;
-
     let output = std::process::Command::new("task")
       .arg("_show")
       .output()
       .context("Unable to run `task _show`.")
       .unwrap();
-
     let data = String::from_utf8_lossy(&output.stdout);
     unsafe {
-      use_new_config = true;
+      USE_NEW_CONFIG = true;
     }
-    for i in { 0..iterations } {
-      let mut now = std::time::Instant::now();
-      let parsed = Config::parse_config(&data).unwrap();
-      println!("Config loading. Elapsed for prsing: {}", now.elapsed().as_micros());
-      unsafe {
-        config_hash_map.set(parsed);
-      }
+    for i in 0..iterations {
+      let now = std::time::Instant::now();
+      let parsed = Config::parse_config(&data);
+      println!("Elapsed for parsing: {}", now.elapsed().as_micros());
+      CONFIG_HASH_MAP.set(parsed);
       let config = Config::new(&data, "next").unwrap();
-      let mut next = now.elapsed();
+      let next = now.elapsed();
       let elapsed = next.as_micros();
       duration_new += elapsed;
-      println!("Config loading. Elapsed: {}", elapsed);
+      println!("Config loaded. Elapsed: {}", elapsed);
 
-      unsafe {
-        config_hash_map.with_borrow_mut(|x| x.clear());
-        config_hash_map.with_borrow(|x| assert_eq!(0, x.len()));
-      }
+      CONFIG_HASH_MAP.with_borrow_mut(|x| x.clear());
+      CONFIG_HASH_MAP.with_borrow(|x| assert_eq!(0, x.len()));
     }
 
     println!("Average Old: {}\n\n\n", duration / iterations);
@@ -1028,9 +988,5 @@ mod tests {
     let ratio = (1000 * duration) / (duration_new * 1000);
     let frac = (1000 * duration) % (duration_new * 1000);
     println!("Ratio seemingly: {}.{:#03}", ratio, frac);
-
-    unsafe {
-      println!("Nones old: {} Nones new: {}", old_nones, nones);
-    }
   }
 }
