@@ -198,49 +198,49 @@ impl TaskReportTable {
     match attribute {
       "id" => task.id().unwrap_or_default().to_string(),
       "scheduled.relative" => match task.scheduled() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
         None => "".to_string(),
       },
       "scheduled.countdown" => match task.scheduled() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
         None => "".to_string(),
       },
       "scheduled" => match task.scheduled() {
-        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
       "due.relative" => match task.due() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
         None => "".to_string(),
       },
       "due" => match task.due() {
-        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
       "until.remaining" => match task.until() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
         None => "".to_string(),
       },
       "until" => match task.until() {
-        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
-      "entry.age" => self.vague_format_date_time_local_tz(NaiveDateTime::new(task.entry().date(), task.entry().time()), Local::now().naive_utc()),
+      "entry.age" => self.vague_format_date_time_local_tz(**task.entry(), Local::now().naive_utc()),
       "entry" => Self::format_date(NaiveDateTime::new(task.entry().date(), task.entry().time())),
       "start.age" => match task.start() {
-        Some(v) => self.vague_format_date_time_local_tz(NaiveDateTime::new(v.date(), v.time()), Local::now().naive_utc()),
+        Some(v) => self.vague_format_date_time_local_tz(**v, Local::now().naive_utc()),
         None => "".to_string(),
       },
       "start" => match task.start() {
-        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
       "end.age" => match task.end() {
-        Some(v) => self.vague_format_date_time_local_tz(NaiveDateTime::new(v.date(), v.time()), Local::now().naive_utc()),
+        Some(v) => self.vague_format_date_time_local_tz(**v, Local::now().naive_utc()),
         None => "".to_string(),
       },
       "end" => match task.end() {
-        Some(v) => Self::format_date(NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
       "status.short" => task.status().to_string().chars().next().unwrap().to_string(),
@@ -299,11 +299,11 @@ impl TaskReportTable {
         None => "".to_string(),
       },
       "wait" => match task.wait() {
-        Some(v) => self.vague_format_date_time_local_tz(NaiveDateTime::new(v.date(), v.time()), Local::now().naive_utc()),
+        Some(v) => self.vague_format_date_time_local_tz(**v, Local::now().naive_utc()),
         None => "".to_string(),
       },
       "wait.remaining" => match task.wait() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), NaiveDateTime::new(v.date(), v.time())),
+        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
         None => "".to_string(),
       },
       "description.count" => {
