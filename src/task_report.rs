@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Datelike, Local, MappedLocalTime, NaiveDate, NaiveDateTime, TimeZone};
 use itertools::join;
 use log::trace;
-use task_hookrs::{task::Task, uda::UDAValue};
+use task_hookrs::{date::Date, task::Task, uda::UDAValue};
 use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
 
@@ -195,50 +195,52 @@ impl TaskReportTable {
   }
 
   pub fn get_string_attribute(&self, attribute: &str, task: &Task, tasks: &[Task]) -> String {
+    // Format vague events that lay in the future, e.g. until
+    let format_vague_until = |date: Option<&Date>| -> String {
+      match date {
+        Some(date) => {
+          // Why naive_utc?
+          self.vague_format_date_time_local_tz(&Local::now().naive_utc(), date)
+        }
+        None => "".to_owned(),
+      }
+    };
+    // Format vague events that lie in the past, e.g. since
+    let format_vague_since = |date: Option<&Date>| -> String {
+      match date {
+        Some(date) => {
+          // Why naive_utc?
+          self.vague_format_date_time_local_tz(date, &Local::now().naive_utc())
+        }
+        None => "".to_owned(),
+      }
+    };
+
     match attribute {
       "id" => task.id().unwrap_or_default().to_string(),
-      "scheduled.relative" => match task.scheduled() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
-        None => "".to_string(),
-      },
-      "scheduled.countdown" => match task.scheduled() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
-        None => "".to_string(),
-      },
+      "scheduled.relative" | "scheduled.countdown" => format_vague_until(task.scheduled()),
       "scheduled" => match task.scheduled() {
         Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
-      "due.relative" => match task.due() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
-        None => "".to_string(),
-      },
+      "due.relative" => format_vague_until(task.due()),
       "due" => match task.due() {
         Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
-      "until.remaining" => match task.until() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
-        None => "".to_string(),
-      },
+      "until.remaining" => format_vague_until(task.until()),
       "until" => match task.until() {
         Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
-      "entry.age" => self.vague_format_date_time_local_tz(**task.entry(), Local::now().naive_utc()),
+      "entry.age" => format_vague_since(Some(task.entry())),
       "entry" => Self::format_date(NaiveDateTime::new(task.entry().date(), task.entry().time())),
-      "start.age" => match task.start() {
-        Some(v) => self.vague_format_date_time_local_tz(**v, Local::now().naive_utc()),
-        None => "".to_string(),
-      },
+      "start.age" => format_vague_since(task.start()),
       "start" => match task.start() {
         Some(v) => Self::format_date(**v),
         None => "".to_string(),
       },
-      "end.age" => match task.end() {
-        Some(v) => self.vague_format_date_time_local_tz(**v, Local::now().naive_utc()),
-        None => "".to_string(),
-      },
+      "end.age" => format_vague_since(task.end()),
       "end" => match task.end() {
         Some(v) => Self::format_date(**v),
         None => "".to_string(),
@@ -298,14 +300,8 @@ impl TaskReportTable {
         Some(v) => v.clone(),
         None => "".to_string(),
       },
-      "wait" => match task.wait() {
-        Some(v) => self.vague_format_date_time_local_tz(**v, Local::now().naive_utc()),
-        None => "".to_string(),
-      },
-      "wait.remaining" => match task.wait() {
-        Some(v) => self.vague_format_date_time_local_tz(Local::now().naive_utc(), **v),
-        None => "".to_string(),
-      },
+      "wait" => format_vague_since(task.wait()),
+      "wait.remaining" => format_vague_until(task.wait()),
       "description.count" => {
         let c = if let Some(a) = task.annotations() {
           format!("[{}]", a.len())
@@ -392,7 +388,7 @@ impl TaskReportTable {
     major_suffix: &'static str,
     minor_suffix: &'static str,
     mut with_remainder: bool,
-    omit_0_remainder: bool
+    omit_0_remainder: bool,
   ) -> String {
     let minus = match negative {
       true => "-",
@@ -419,17 +415,49 @@ impl TaskReportTable {
     let remainder = |major_time: i64, minor_time: i64| -> i64 { (seconds - major_time * (seconds / major_time)) / minor_time };
 
     if seconds >= YEAR {
-      Self::format_time_pair(negative, seconds / YEAR, remainder(YEAR, MONTH), "y", "mo", with_remainder, omit_0_remainder)
+      Self::format_time_pair(
+        negative,
+        seconds / YEAR,
+        remainder(YEAR, MONTH),
+        "y",
+        "mo",
+        with_remainder,
+        omit_0_remainder,
+      )
     } else if seconds >= 3 * MONTH {
-      Self::format_time_pair(negative, seconds / MONTH, remainder(MONTH, WEEK), "mo", "w", with_remainder, omit_0_remainder)
+      Self::format_time_pair(
+        negative,
+        seconds / MONTH,
+        remainder(MONTH, WEEK),
+        "mo",
+        "w",
+        with_remainder,
+        omit_0_remainder,
+      )
     } else if seconds >= 2 * WEEK {
       Self::format_time_pair(negative, seconds / WEEK, remainder(WEEK, DAY), "w", "d", with_remainder, omit_0_remainder)
     } else if seconds >= DAY {
       Self::format_time_pair(negative, seconds / DAY, remainder(DAY, HOUR), "d", "h", with_remainder, omit_0_remainder)
     } else if seconds >= HOUR {
-      Self::format_time_pair(negative, seconds / HOUR, remainder(HOUR, MINUTE), "h", "min", with_remainder, omit_0_remainder)
+      Self::format_time_pair(
+        negative,
+        seconds / HOUR,
+        remainder(HOUR, MINUTE),
+        "h",
+        "min",
+        with_remainder,
+        omit_0_remainder,
+      )
     } else if seconds >= MINUTE {
-      Self::format_time_pair(negative, seconds / MINUTE, remainder(MINUTE, SECOND), "min", "s", with_remainder, omit_0_remainder)
+      Self::format_time_pair(
+        negative,
+        seconds / MINUTE,
+        remainder(MINUTE, SECOND),
+        "min",
+        "s",
+        with_remainder,
+        omit_0_remainder,
+      )
     } else {
       Self::format_time_pair(negative, seconds, 0, "s", "", false, false)
     }
@@ -455,9 +483,9 @@ impl TaskReportTable {
   }
 
   /// Format vague date_time while taking e.g. leap seconds or DST into account
-  pub fn vague_format_date_time_local_tz(self: &Self, from_dt: NaiveDateTime, to_dt: NaiveDateTime) -> String {
-    let to_dt = Self::ndt_to_dtl(&to_dt);
-    let from_dt = Self::ndt_to_dtl(&from_dt);
+  pub fn vague_format_date_time_local_tz(self: &Self, from_dt: &NaiveDateTime, to_dt: &NaiveDateTime) -> String {
+    let to_dt = Self::ndt_to_dtl(to_dt);
+    let from_dt = Self::ndt_to_dtl(from_dt);
     let seconds = (to_dt - from_dt).num_seconds();
 
     Self::vague_format_date_time(seconds, self.date_time_vague_precise, self.date_time_vague_omit_0_remainder)
