@@ -1,6 +1,17 @@
-use std::{collections::HashMap, error::Error, str};
+use std::{
+  borrow::Borrow,
+  cell::{OnceCell, RefCell},
+  collections::HashMap,
+  error::Error,
+  hash::Hash,
+  os::unix::thread,
+  str,
+  sync::LazyLock,
+};
 
 use anyhow::{Context, Result};
+use itertools::Itertools;
+use log::info;
 use ratatui::{
   style::{Color, Modifier, Style},
   symbols::{bar::FULL, line::DOUBLE_VERTICAL},
@@ -34,6 +45,13 @@ pub struct Uda {
   default: Option<String>,
   urgency: Option<f64>,
 }
+
+thread_local! {
+  static config_hash_map: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+
+}
+static mut use_new_config: bool = false;
+static mut nones: u64 = 0;
 
 // TODO: Implement Default
 // TODO: Try to reimplement config parsing with Serde
@@ -94,6 +112,8 @@ pub struct Config {
   pub uda_task_report_date_time_vague_more_precise: bool,
   pub uda_context_menu_select_on_move: bool,
   pub uda: Vec<Uda>,
+
+  pub use_config_hash_map: bool,
 }
 
 impl Config {
@@ -224,6 +244,8 @@ impl Config {
       uda_task_report_date_time_vague_more_precise,
       uda_context_menu_select_on_move,
       uda: vec![],
+
+      use_config_hash_map: false,
     })
   }
 
@@ -390,7 +412,61 @@ impl Config {
     }
   }
 
+  fn standardize_config_key(key: &str) -> String {
+    if key.starts_with("uda.taskwarrior-tui") || key.starts_with("uda.taskwarrior_tui") {
+      let replaced = key.replace("_", "-");
+
+      if replaced.as_str() != key {
+        info!(
+          "Found Taskwarrior-tui config key {} with underscores. Replaced it with hyphens to {}. \
+                 Taskwarrior-tui underscore UDAs may get deprecated in a future version, please update your config",
+          key,
+          replaced.as_str()
+        );
+
+        return replaced;
+      }
+    }
+
+    key.to_owned()
+  }
+
+  fn parse_config(config: &str) -> Result<HashMap<String, String>> {
+    let mut config_values: HashMap<String, String> = config
+      // Split by platforms newline
+      .lines()
+      // Pre-filter empty lines, as this is cheap
+      .filter(|line| !line.is_empty())
+      // Strip comments
+      .filter_map(|line| line.split('#').next())
+      // Trim spaces from start and end
+      .map(|line| line.trim())
+      // Remove empty lines after filterchain
+      .filter(|line| !line.is_empty())
+      // Split into key and value(and filter out values like e.g. include that don't conform to this)
+      .filter_map(|line| line.split_once('='))
+      // Rename underscores to hyphens for consistency
+      .map(|(key, value)| (Self::standardize_config_key(key), value.to_owned()))
+      .collect();
+
+    config_values.shrink_to_fit();
+    Ok(config_values)
+  }
+
   fn get_config(config: &str, data: &str) -> Option<String> {
+    unsafe {
+      if (use_new_config) {
+        unsafe {
+          let value = config_hash_map.with_borrow(|x| x.get(config).map(|y| y.to_owned()));
+          if value.is_none() {
+            nones += 1;
+          }
+
+          return value;
+        }
+      }
+    }
+
     let mut config_lines = Vec::new();
 
     for line in data.split('\n') {
@@ -404,8 +480,11 @@ impl Config {
           }
         }
       } else {
+        // ?
         if !line.starts_with("   ") {
-          return Some(config_lines.join(" "));
+          let value = Some(config_lines.join(" "));
+
+          return value;
         }
 
         config_lines.push(line.trim_start().trim_end().to_string());
@@ -413,9 +492,14 @@ impl Config {
     }
 
     if !config_lines.is_empty() {
-      return Some(config_lines.join(" "));
+      let value = Some(config_lines.join(" "));
+
+      return value;
     }
 
+    unsafe {
+      nones += 1;
+    }
     None
   }
 
@@ -871,5 +955,82 @@ mod tests {
       "report.test.description test\nreport.test.filter filter and\n                   test",
     );
     assert_eq!(config.unwrap(), "filter and test");
+  }
+
+  #[test]
+  fn benchmark_get_config_option() {
+    let output = std::process::Command::new("task")
+      .arg("rc.color=off")
+      .arg("rc._forcecolor=off")
+      .arg("rc.defaultwidth=0")
+      .arg("show")
+      .output()
+      .context("Unable to run `task show`.")
+      .unwrap();
+
+    let data = String::from_utf8_lossy(&output.stdout);
+    let mut duration: u128 = 0;
+
+    let iterations = 10000;
+
+    for i in { 0..iterations } {
+      let mut now = std::time::Instant::now();
+      let config = Config::new(&data, "next").unwrap();
+      let mut next = now.elapsed();
+      let elapsed = next.as_micros();
+      duration += elapsed;
+      println!("Config loading. Elapsed: {}", elapsed);
+    }
+
+    let mut old_nones = 0;
+    unsafe {
+      old_nones = nones;
+
+      nones = 0;
+    }
+
+    let mut duration_new: u128 = 0;
+
+    let iterations = 10000;
+
+    let output = std::process::Command::new("task")
+      .arg("_show")
+      .output()
+      .context("Unable to run `task _show`.")
+      .unwrap();
+
+    let data = String::from_utf8_lossy(&output.stdout);
+    unsafe {
+      use_new_config = true;
+    }
+    for i in { 0..iterations } {
+      let mut now = std::time::Instant::now();
+      let parsed = Config::parse_config(&data).unwrap();
+      println!("Config loading. Elapsed for prsing: {}", now.elapsed().as_micros());
+      unsafe {
+        config_hash_map.set(parsed);
+      }
+      let config = Config::new(&data, "next").unwrap();
+      let mut next = now.elapsed();
+      let elapsed = next.as_micros();
+      duration_new += elapsed;
+      println!("Config loading. Elapsed: {}", elapsed);
+
+      unsafe {
+        config_hash_map.with_borrow_mut(|x| x.clear());
+        config_hash_map.with_borrow(|x| assert_eq!(0, x.len()));
+      }
+    }
+
+    println!("Average Old: {}\n\n\n", duration / iterations);
+    println!("Average New: {}\n\n\n", duration_new / iterations);
+
+    let ratio = (1000 * duration) / (duration_new * 1000);
+    let frac = (1000 * duration) % (duration_new * 1000);
+    println!("Ratio seemingly: {}.{:#03}", ratio, frac);
+
+    unsafe {
+      println!("Nones old: {} Nones new: {}", old_nones, nones);
+    }
   }
 }
