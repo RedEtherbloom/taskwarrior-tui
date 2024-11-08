@@ -217,7 +217,7 @@ impl TaskReportTable {
     };
     let format_option_date = |date: Option<&Date>| -> String {
       match date {
-        Some(date) => Self::format_date(**date),
+        Some(date) => Self::format_date(date),
         None => String::new(),
       }
     };
@@ -231,7 +231,7 @@ impl TaskReportTable {
       "until.remaining" => format_vague_until(task.until()),
       "until" => format_option_date(task.until()),
       "entry.age" => format_vague_since(Some(task.entry())),
-      "entry" => Self::format_date(NaiveDateTime::new(task.entry().date(), task.entry().time())),
+      "entry" => Self::format_date(task.entry()),
       "start.age" => format_vague_since(task.start()),
       "start" => format_option_date(task.start()),
       "end.age" => format_vague_since(task.end()),
@@ -349,15 +349,14 @@ impl TaskReportTable {
     }
   }
 
+  pub fn format_date(dt: &NaiveDateTime) -> String {
+    let dt = Local.from_local_datetime(dt).unwrap();
+    dt.format("%Y-%m-%d").to_string()
+  }
+
   pub fn format_date_time(dt: NaiveDateTime) -> String {
     let dt = Local.from_local_datetime(&dt).unwrap();
     dt.format("%Y-%m-%d %H:%M:%S").to_string()
-  }
-
-  pub fn format_date(dt: NaiveDateTime) -> String {
-    let offset = Local.offset_from_utc_datetime(&dt);
-    let dt = DateTime::<Local>::from_naive_utc_and_offset(dt, offset);
-    dt.format("%Y-%m-%d").to_string()
   }
 
   /// Formats two given time values for use by `vague_format_date_time`
@@ -486,6 +485,11 @@ impl TaskReportTable {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_option_format_date() {
+
+  }
 
   #[test]
   fn test_format_time_pair() {
