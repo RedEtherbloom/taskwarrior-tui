@@ -3,15 +3,17 @@ use std::{
   cmp::Ordering,
   collections::{HashMap, HashSet},
   convert::TryInto,
-  fs, io,
-  io::{Read, Write},
+  ffi::OsString,
+  fs,
+  io::{self, Read, Write},
   path::Path,
   sync::{mpsc, Arc, Mutex},
   time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{anyhow, Context as AnyhowContext, Result};
-use chrono::{DateTime, Datelike, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
+use cached::{Cached, SizedCache};
+use chrono::{DateTime, Datelike, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
 use crossterm::{
   event::{DisableMouseCapture, EnableMouseCapture},
   execute,
@@ -19,6 +21,7 @@ use crossterm::{
   terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::SinkExt;
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::{debug, error, info, log_enabled, trace, warn, Level, LevelFilter};
 use ratatui::{
@@ -175,7 +178,7 @@ pub struct TaskwarriorTui {
   pub modify: LineBuffer,
   pub tasks: Vec<Task>,
   pub all_tasks: Vec<Task>,
-  pub task_details: HashMap<Uuid, String>,
+  pub task_details: SizedCache<Uuid, String>,
   pub marked: HashSet<Uuid>,
   // stores index of current task that is highlighted
   pub current_selection: usize,
@@ -190,7 +193,10 @@ pub struct TaskwarriorTui {
   pub task_report_height: u16,
   pub task_details_scroll: u16,
   pub help_popup: Help,
-  pub last_export: Option<SystemTime>,
+  // Latest mtime of the database, used as a cheap pre-check for the expensive approach of asking taskwarrior if any tasks changed.
+  pub last_db_export_mtime: SystemTime,
+  // Last time when changed tasks were reported by taskwarrior.
+  pub last_modified_filter_time: DateTime<Utc>,
   pub keyconfig: KeyConfig,
   pub terminal_width: u16,
   pub terminal_height: u16,
@@ -207,6 +213,7 @@ pub struct TaskwarriorTui {
   pub event_loop: crate::event::EventLoop,
   pub requires_redraw: bool,
   pub changes: utils::Changeset,
+  pub ticks_since_last_keypress: usize,
 }
 
 impl TaskwarriorTui {
@@ -257,7 +264,7 @@ impl TaskwarriorTui {
       task_table_state: TaskwarriorTuiTableState::default(),
       tasks: vec![],
       all_tasks: vec![],
-      task_details: HashMap::new(),
+      task_details: SizedCache::with_size(c.uda_task_detail_cache_capacity),
       marked: HashSet::new(),
       current_selection: 0,
       current_selection_uuid: None,
@@ -276,7 +283,12 @@ impl TaskwarriorTui {
       task_report_table: TaskReportTable::new(&data, report)?,
       calendar_year: Local::now().year(),
       help_popup: Help::new(),
-      last_export: None,
+      // Set to UNIX epoch(0) to trigger indexing on Startup
+      last_db_export_mtime: SystemTime::UNIX_EPOCH,
+      // Initialize to current time
+      // TODO: Is this correct? or understandable?
+      // TODO: Is it correct to just set it to the current time? Really depends on the boot process
+      last_modified_filter_time: Utc::now(),
       keyconfig: kc,
       terminal_width: w,
       terminal_height: h,
@@ -293,6 +305,7 @@ impl TaskwarriorTui {
       event_loop,
       requires_redraw: false,
       changes: utils::Changeset::default(),
+      ticks_since_last_keypress: 0,
     };
 
     for c in app.config.filter.chars() {
@@ -390,6 +403,7 @@ impl TaskwarriorTui {
           }
           Event::Tick => {
             debug!("Tick event");
+            self.ticks_since_last_keypress = self.ticks_since_last_keypress.saturating_add(1);
             self.update(false).await?;
           }
           Event::Closed => {
@@ -422,7 +436,6 @@ impl TaskwarriorTui {
     self.current_context_filter = String::from_utf8_lossy(&output.stdout).to_string();
     self.current_context_filter = self.current_context_filter.strip_suffix('\n').unwrap_or("").to_string();
 
-    // If new format is not used, check if old format is used
     if self.current_context_filter.is_empty() {
       let output = std::process::Command::new("task")
         .arg("_get")
@@ -1053,7 +1066,7 @@ impl TaskwarriorTui {
     let task_id = self.tasks[selected].id().unwrap_or_default();
     let task_uuid = *self.tasks[selected].uuid();
 
-    let data = match self.task_details.get(&task_uuid) {
+    let data = match self.task_details.cache_get(&task_uuid) {
       Some(s) => s.clone(),
       None => "Loading task details ...".to_string(),
     };
@@ -1283,11 +1296,49 @@ impl TaskwarriorTui {
     (tasks, headers)
   }
 
+  // TODO: Will probably not work, depending on how and when undo buffers have to get updated
+  // TODO: What specifically does export next export?
+  async fn query_changed_tasks(&mut self) -> Result<Vec<Uuid>> {
+    let db_changed = self.db_mtime_changed(self.last_db_export_mtime)?;
+
+    match db_changed {
+      false => Ok(Vec::new()),
+      true => {
+        let changed_tasks = self.tasks_changed_since(&self.last_modified_filter_time).await?;
+        debug!(
+          "{} tasks changed since {:?} according to modified filter command",
+          changed_tasks.len(),
+          self.last_modified_filter_time
+        );
+
+        // TODO: This should be moved into db_mtime, in a pretty way
+        // Way too brittle, to set it in such a sporadic way here and in the mainloop
+        // Plus, the name really has to be changed to better reflect what it does
+        let mtime = self.get_task_database_mtime()?;
+        self.last_db_export_mtime = mtime;
+
+        Ok(changed_tasks)
+      }
+    }
+  }
+
+  fn remove_stale_task_details(&mut self, changed_tasks: &Vec<Uuid>) {
+    for uuid in changed_tasks {
+      debug!("Removing stale UUID: {uuid} from task detail cache");
+      self.task_details.cache_remove(uuid);
+    }
+  }
+
   pub async fn update(&mut self, force: bool) -> Result<()> {
     trace!("self.update({:?});", force);
-    if force || self.dirty || self.tasks_changed_since(self.last_export).unwrap_or(true) {
+
+    let changed_tasks = self.query_changed_tasks().await?;
+    self.remove_stale_task_details(&changed_tasks);
+
+    if force || self.dirty || !changed_tasks.is_empty() {
       self.get_context()?;
       let task_uuids = self.selected_task_uuids();
+      // What is this here for?!?!
       if self.current_selection_uuid.is_none() && self.current_selection_id.is_none() && task_uuids.len() == 1 {
         if let Some(uuid) = task_uuids.first() {
           self.current_selection_uuid = Some(*uuid);
@@ -1302,13 +1353,19 @@ impl TaskwarriorTui {
       self.contexts.update_data()?;
       self.projects.update_data()?;
       self.update_tags();
-      self.task_details.clear();
+      //TODO: Figure out cases in which Task Detail cache would need to be cleared(shouldn't be that many)
+      //self.task_details.cache_clear();
       self.dirty = false;
       self.save_history()?;
 
       // Some operations like export or summary change the taskwarrior database.
       // The export time therefore gets set at the end, to avoid an infinite update loop.
-      self.last_export = Some(std::time::SystemTime::now());
+      //TODO: Get rid of sum
+      //...reading this sounds like a good idea
+      self.last_db_export_mtime = SystemTime::now();
+      // Ugly, don't think I can merge this without some tradeoffs
+      // Is there some better way to write this?
+      self.last_modified_filter_time = Utc::now();
     }
     self.cursor_fix();
     self.update_task_table_state();
@@ -1353,69 +1410,115 @@ impl TaskwarriorTui {
   }
 
   pub async fn update_task_details(&mut self) -> Result<()> {
+    lazy_static! {
+      static ref RE_UUID_CAPTURE: Regex = Regex::new(r"(?m)^UUID[[:space:]]*([-[[:xdigit:]]]+)[[:space:]]*$").unwrap();
+    }
+    let enter = Instant::now();
+
     if self.tasks.is_empty() {
       return Ok(());
     }
 
-    // remove task_details of tasks not in task report
-    let mut to_delete = vec![];
-    for k in self.task_details.keys() {
-      if !self.tasks.iter().map(Task::uuid).any(|x| x == k) {
-        to_delete.push(*k);
-      }
+    let selected_task_index = self.current_selection;
+    if selected_task_index >= self.tasks.len() {
+      return Err(anyhow!("Task selection index: {selected_task_index} out of bounds"));
     }
-    for k in to_delete {
-      self.task_details.remove(&k);
-    }
+    let selected_task_uuid = *self.tasks[selected_task_index].uuid();
+    debug!("Time taken for index checking: {}", enter.elapsed().as_micros());
 
-    let selected = self.current_selection;
-    if selected >= self.tasks.len() {
+    // Cheaper than reallocation
+    let mut indices_to_fetch = Vec::with_capacity(2 * self.config.uda_task_detail_prefetch + 1);
+
+    // Add selected index and indices around it
+    // TODO: Wrapping
+    indices_to_fetch.push(selected_task_index);
+    if self.ticks_since_last_keypress >= 2 {
+      for i in 1..=self.config.uda_task_detail_prefetch {
+        indices_to_fetch.insert(0, std::cmp::min(selected_task_index.saturating_sub(i), self.tasks.len() - 1));
+        indices_to_fetch.push(std::cmp::min(selected_task_index + i, self.tasks.len() - 1));
+      }
+
+      indices_to_fetch.dedup();
+    }
+    //debug!("Time taken for Vec alloc: {}", enter.elapsed().as_micros());
+
+    // Collect UUIDs to avoid self borrow issues regarding cache_get
+    let index_uuids: Vec<Uuid> = indices_to_fetch.iter().map(|i| *self.tasks[*i].uuid()).collect();
+    // Collects UUIDs that have not yet been cached
+    let uuids_to_cache = index_uuids.iter().filter(|uuid| self.task_details.cache_get(uuid).is_none());
+    let formatted_uuids: Vec<String> = uuids_to_cache.map(|el| format!("{}", *el)).collect();
+
+    let count_uuids_to_fetch = formatted_uuids.len();
+    // Everything already cached
+    if count_uuids_to_fetch == 0 {
       return Ok(());
     }
-    let current_task_uuid = *self.tasks[selected].uuid();
+    //debug!("Time taken for formatting: {}", enter.elapsed().as_micros());
 
-    let mut l = vec![selected];
-
-    for s in 1..=self.config.uda_task_detail_prefetch {
-      l.insert(0, std::cmp::min(selected.saturating_sub(s), self.tasks.len() - 1));
-      l.push(std::cmp::min(selected + s, self.tasks.len() - 1));
-    }
-
-    l.dedup();
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-    let tasks = self.tasks.clone();
     let defaultwidth = self.terminal_width.saturating_sub(2);
-    for s in &l {
-      if tasks.is_empty() {
-        return Ok(());
-      }
-      if s >= &tasks.len() {
-        break;
-      }
-      let task_uuid = *tasks[*s].uuid();
-      if !self.task_details.contains_key(&task_uuid) || task_uuid == current_task_uuid {
-        debug!("Running task details for {}", task_uuid);
-        let _tx = tx.clone();
-        tokio::spawn(async move {
-          let output = tokio::process::Command::new("task")
-            .arg("rc.color=off")
-            .arg("rc._forcecolor=off")
-            .arg(format!("rc.defaultwidth={}", defaultwidth))
-            .arg(format!("{}", task_uuid))
-            .output()
-            .await;
-          if let Ok(output) = output {
-            let data = String::from_utf8_lossy(&output.stdout).to_string();
-            _tx.send(Some((task_uuid, data))).await.unwrap();
+    let mut command = tokio::process::Command::new("task");
+    command
+      .stdin(std::process::Stdio::null())
+      .arg("rc.color=off")
+      .arg("rc._forcecolor=off")
+      // TODO: Recheck if these arguments are sufficient. Probably are...
+      .arg("rc.verbose=nothing,blank")
+      .arg(format!("rc.defaultwidth={}", defaultwidth))
+      .arg("info")
+      .args(&formatted_uuids);
+
+    //debug!("Time taken for command creation: {}", enter.elapsed().as_micros());
+
+    let test_lol = format!("Commaqnd: {:#?}", command.as_std());
+    debug!("The command is: {:?}", command.as_std());
+
+    debug!("Time taken for silly command shenanigans: {}", enter.elapsed().as_micros());
+
+    let output = command
+      .output()
+      .await
+      .with_context(|| format!("Fetching task details failed for tasks: {}", formatted_uuids.join(" ")))?;
+    debug!("Time taken for command: {}", enter.elapsed().as_micros());
+
+    let command_output_string = String::from_utf8_lossy(&output.stdout);
+    debug!("Time taken for utf8 lossy: {}", enter.elapsed().as_micros());
+    // Segments are seperated by blocks of 2 Newlines + 1 Newline at the end of the previous block
+    let segments = command_output_string.split("\n\n\n").map(|x| x.trim());
+
+    debug!("Time taken for task splitting: {}", enter.elapsed().as_micros());
+    let mut count_segments_inserted = 0;
+    for segment in segments {
+      let uuid = match RE_UUID_CAPTURE.captures(segment) {
+        Some(capture) => {
+          // Specified Regex ensures that a first capture group has to exist for it to match
+          let uuid_str = capture.get(1).expect("UUID capture group should have had at least 1 match").as_str();
+
+          match Uuid::parse_str(uuid_str) {
+            Ok(uuid) => uuid,
+            Err(e) => {
+              error!("Invalid UUID: {uuid_str} encountered in segment: {segment} with error: {e}");
+              continue;
+            }
           }
-        });
-      }
+        }
+        None => {
+          error!("Invalid segment found: {segment} Skipping...");
+          continue;
+        }
+      };
+
+      self.task_details.cache_set(uuid, segment.to_owned());
+      debug!("Inserted UUID: {uuid} into task details cache");
+      count_segments_inserted += 1;
     }
-    drop(tx);
-    while let Some(Some((task_uuid, data))) = rx.recv().await {
-      self.task_details.insert(task_uuid, data);
+    debug!("Time taken for insertion: {}", enter.elapsed().as_micros());
+
+    if count_segments_inserted != count_uuids_to_fetch {
+      error!("Inserted {count_segments_inserted} task details but expected {count_uuids_to_fetch} ");
     }
+    assert_eq!(count_segments_inserted, count_uuids_to_fetch);
+
+    debug!("Time taken to update tasks: {}", enter.elapsed().as_micros());
     Ok(())
   }
 
@@ -1608,37 +1711,24 @@ impl TaskwarriorTui {
     Ok(mtime)
   }
 
-  pub fn tasks_changed_since(&mut self, prev: Option<SystemTime>) -> Result<bool> {
-    if let Some(prev) = prev {
-      let mtime = self.get_task_database_mtime()?;
-      if mtime > prev {
-        Ok(true)
-      } else {
-        // Unfortunately, we can not use std::time::Instant which is guaranteed to be monotonic,
-        // because we need to compare it to a file mtime as SystemTime, so as a safety for unexpected
-        // time shifts, cap maximum wait to 1 min
-        let now = SystemTime::now();
-        let max_delta = Duration::from_secs(60);
-        Ok(now.duration_since(prev)? > max_delta)
-      }
+  pub fn db_mtime_changed(&self, prev: SystemTime) -> Result<bool> {
+    let mtime = self.get_task_database_mtime()?;
+    trace!("Previous MTime: {:?} Current MTime: {:?}", prev, mtime);
+    if mtime > prev {
+      Ok(true)
+    } else {
+      // Unfortunately, we can not use std::time::Instant which is guaranteed to be monotonic,
+      // because we need to compare it to a file mtime as SystemTime, so as a safety for unexpected
+      // time shifts, cap maximum wait to 1 min
+      // TODO:
+      let now = SystemTime::now();
+      let max_delta = Duration::from_secs(60);
+      Ok(now.duration_since(prev)? > max_delta)
+    }
+  }
 
-  pub async fn tasks_changed_since(&self, since: &Date) -> Result<Vec<Uuid>> {
+  pub async fn tasks_changed_since(&self, since: &DateTime<Utc>) -> Result<Vec<Uuid>> {
     let mut command = tokio::process::Command::new("task");
-
-    // TODO: Read up more on Taskwarriors Timezones?
-    // This has no timezone, as it would otherwise differ from taskwarriors internal timezone free format
-    //Update:: The use a simple timestamp now internally. Neat!
-    // TODO: How did Timezone support change in TK3?
-    let last_modified_time = format!(
-      "'{:04}-{:02}-{:02}T{:02}:{:02}:{:02}'",
-      since.year(),
-      since.month(),
-      since.day(),
-      since.hour(),
-      since.minute(),
-      since.second(),
-    );
-
     command
       .arg("rc.color=off")
       .arg("rc._forcecolor=off")
@@ -1646,7 +1736,7 @@ impl TaskwarriorTui {
       // GCing contributes >40% of this commands runtime in many cases.
       // New tasks would lead the export pipeline to rerun, also running GC, making this GC redundant.
       .arg("rc.gc=off")
-      .arg(format!("modified.after:{}", last_modified_time))
+      .arg(format!("modified.after:{}", since.timestamp()))
       .arg("_unique")
       .arg("uuid");
 
@@ -1734,6 +1824,7 @@ impl TaskwarriorTui {
   }
 
   pub fn export_tasks(&mut self) -> Result<()> {
+    let start = Instant::now();
     let mut task = std::process::Command::new("task");
 
     task
@@ -1744,6 +1835,8 @@ impl TaskwarriorTui {
       .arg("rc._forcecolor=off");
     // .arg("rc.verbose:override=false");
 
+    // ???
+    // Seems to fetch the tasks of the current context
     if let Some(args) = shlex::split(format!(r#"rc.report.{}.filter='{}'"#, self.report, self.filter.trim()).trim()) {
       for arg in args {
         task.arg(arg);
@@ -1767,7 +1860,9 @@ impl TaskwarriorTui {
     }
 
     info!("Running `{:#?}`", task);
+    debug!("Pre command time: {}", start.elapsed().as_micros());
     let output = task.output()?;
+    debug!("Command execution time: {}", start.elapsed().as_micros());
     let data = String::from_utf8_lossy(&output.stdout);
     let error = String::from_utf8_lossy(&output.stderr);
 
@@ -2298,7 +2393,8 @@ impl TaskwarriorTui {
 
   pub fn task_undo(&mut self) -> Result<(), String> {
     lazy_static! {
-      static ref UUID_RE: Regex = Regex::new(r"(?P<task_uuid>[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12})").unwrap();
+      static ref UUID_RE: Regex =
+        Regex::new(r"(?P<task_uuid>[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12})").unwrap();
     }
 
     let output = std::process::Command::new("task").arg("rc.confirmation=off").arg("undo").output();
@@ -2568,6 +2664,8 @@ impl TaskwarriorTui {
   }
 
   pub async fn handle_input(&mut self, input: KeyCode) -> Result<()> {
+    self.ticks_since_last_keypress = 0;
+
     match self.mode {
       Mode::Tasks(_) => {
         self.handle_input_by_task_mode(input).await?;

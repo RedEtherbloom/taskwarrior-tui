@@ -61,9 +61,9 @@ pub struct Config {
   pub uda_auto_insert_double_quotes_on_log: bool,
   pub uda_prefill_task_metadata: bool,
   pub uda_reset_filter_on_esc: bool,
-  // Maximum count of pretfetch task details to keep cached
-  pub uda_task_detail_cache_capacity: usize,
   pub uda_task_detail_prefetch: usize,
+  // Maximum number of Task Detail outputs to keep cached
+  pub uda_task_detail_cache_capacity: usize,
   pub uda_task_report_use_all_tasks_for_completion: bool,
   pub uda_task_report_show_info: bool,
   pub uda_task_report_looping: bool,
@@ -133,6 +133,7 @@ impl Config {
     let uda_reset_filter_on_esc = Self::get_uda_reset_filter_on_esc(data);
     let uda_task_detail_cache_capacity = Self::get_uda_task_detail_cache_capacity(data);
     let uda_task_detail_prefetch = Self::get_uda_task_detail_prefetch(data);
+    let uda_task_detail_cache_capacity = Self::get_uda_task_detail_cache_capacity(data);
     let uda_task_report_use_all_tasks_for_completion = Self::get_uda_task_report_use_all_tasks_for_completion(data);
     let uda_task_report_show_info = Self::get_uda_task_report_show_info(data);
     let uda_task_report_looping = Self::get_uda_task_report_looping(data);
@@ -199,8 +200,8 @@ impl Config {
       uda_auto_insert_double_quotes_on_log,
       uda_prefill_task_metadata,
       uda_reset_filter_on_esc,
-      uda_task_detail_cache_capacity,
       uda_task_detail_prefetch,
+      uda_task_detail_cache_capacity,
       uda_task_report_use_all_tasks_for_completion,
       uda_task_report_show_info,
       uda_task_report_looping,
