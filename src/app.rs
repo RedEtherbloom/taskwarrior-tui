@@ -1202,7 +1202,7 @@ impl TaskwarriorTui {
 
     for (i, header) in headers.iter().enumerate() {
       if header == "Description" || header == "Definition" {
-        self.task_report_table.description_width = widths[i] - 1;
+        self.task_report_table.max_description_width = widths[i] - 1;
         break;
       }
     }
